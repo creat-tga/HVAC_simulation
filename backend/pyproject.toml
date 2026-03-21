@@ -1,0 +1,19 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "HVAC仿真平台后端"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.135.1",
+    "uvicorn>=0.42.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "python-multipart>=0.0.20",
+    "pydantic-settings>=2.7.0",
+    "aiosqlite>=0.22.1",
+    "pyjwt>=2.12.1",
+    "passlib[bcrypt]>=1.7.4",
+    "bcrypt>=4.0,<4.2",
+]
