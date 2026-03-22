@@ -14,8 +14,8 @@ venv/
 node_modules/
 dist/
 
-# IDE
-.vscode/
+# IDE 同步设置
+# .vscode/ 
 .idea/
 *.swp
 *.swo
