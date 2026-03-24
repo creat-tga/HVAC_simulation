@@ -8,9 +8,10 @@
 }
 
 body {
-  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  color: #1e293b;
 }
 
 /* Custom scrollbar */
@@ -24,17 +25,68 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(148, 163, 184, 0.25);
   border-radius: 3px;
   transition: background 0.2s;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(148, 163, 184, 0.45);
 }
 
 /* Firefox scrollbar */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.08) transparent;
+  scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
+}
+
+/* Glass card style for Element Plus cards */
+.el-card {
+  --el-card-bg-color: rgba(255, 255, 255, 0.65) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(226, 232, 240, 0.5) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  transition: box-shadow 0.25s ease, transform 0.25s ease, border-color 0.25s ease !important;
+}
+
+.el-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06) !important;
+}
+
+/* Glass dialog style */
+.el-dialog {
+  border-radius: 16px !important;
+  overflow: hidden;
+}
+
+/* Improved table styling */
+.el-table {
+  --el-table-bg-color: transparent !important;
+  --el-table-tr-bg-color: transparent !important;
+  --el-table-header-bg-color: rgba(241, 245, 249, 0.6) !important;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Improved tag styles */
+.el-tag {
+  border-radius: 6px;
+}
+
+/* Improved button roundness */
+.el-button {
+  border-radius: 8px;
+}
+
+/* Element Plus primary color override to cyan-600 */
+:root {
+  --el-color-primary: #0891b2;
+  --el-color-primary-light-3: #22d3ee;
+  --el-color-primary-light-5: #67e8f9;
+  --el-color-primary-light-7: #a5f3fc;
+  --el-color-primary-light-8: #cffafe;
+  --el-color-primary-light-9: #ecfeff;
+  --el-color-primary-dark-2: #0e7490;
 }

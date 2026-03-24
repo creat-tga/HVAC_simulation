@@ -113,11 +113,23 @@ onMounted(async () => {
 <style scoped>
 h1 {
   margin: 0 0 24px;
-  font-size: 24px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.02em;
 }
 
 .summary-cards {
   margin-bottom: 24px;
+}
+
+.summary-cards :deep(.el-statistic) {
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(226, 232, 240, 0.5);
+  border-radius: 12px;
 }
 
 .summary-desc {

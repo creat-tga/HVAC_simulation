@@ -184,7 +184,10 @@ function viewReport(resultId: string) {
 
 .page-header h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.02em;
 }
 
 .section-card {

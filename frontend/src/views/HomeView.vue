@@ -380,7 +380,10 @@ function openProject(id: string) {
 
 .page-header h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.02em;
 }
 
 .header-actions {
@@ -398,22 +401,19 @@ function openProject(id: string) {
 .project-card {
   margin-bottom: 20px;
   cursor: pointer;
-  border-radius: 8px;
-  border: 1px solid #e8e8e8;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
   height: 170px;
-  background: #fff;
 }
 
 .project-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 4px rgba(0, 0, 0, 0.05);
-  border-color: var(--el-color-primary-light-5);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(6, 182, 212, 0.08) !important;
+  border-color: rgba(6, 182, 212, 0.25) !important;
 }
 
 .project-card.is-selected {
-  border-color: var(--el-color-primary);
-  box-shadow: 0 0 0 2px var(--el-color-primary-light-7);
+  border-color: #0891b2 !important;
+  box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.15) !important;
 }
 
 .project-card :deep(.el-card__body) {
@@ -436,14 +436,15 @@ function openProject(id: string) {
 }
 
 .card-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
-  color: var(--el-text-color-primary);
+  color: #0f172a;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
   min-width: 0;
+  letter-spacing: -0.01em;
 }
 
 .card-actions {
@@ -452,7 +453,7 @@ function openProject(id: string) {
 }
 
 .description {
-  color: var(--el-text-color-secondary);
+  color: #64748b;
   font-size: 13px;
   line-height: 1.6;
   margin: 0;
@@ -472,11 +473,11 @@ function openProject(id: string) {
   align-items: center;
   margin-top: auto;
   padding-top: 10px;
-  border-top: 1px solid var(--el-border-color-extra-light);
+  border-top: 1px solid rgba(226, 232, 240, 0.5);
 }
 
 .date {
-  color: var(--el-text-color-placeholder);
+  color: #94a3b8;
   font-size: 12px;
 }
 </style>

@@ -107,16 +107,18 @@ function finishDrag() {
   left: 0;
   right: 0;
   height: 44px;
-  background: #e8e8e8;
-  border-radius: 4px;
+  background: rgba(30, 41, 59, 0.6);
+  border-radius: 8px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.15);
 }
 
 .slider-track.verified {
-  background: #f0f9eb;
+  background: rgba(6, 182, 212, 0.1);
+  border-color: rgba(6, 182, 212, 0.3);
 }
 
 .slider-fill {
@@ -124,24 +126,24 @@ function finishDrag() {
   left: 0;
   top: 0;
   height: 100%;
-  background: #d9ecff;
+  background: rgba(6, 182, 212, 0.15);
   transition: none;
 }
 
 .slider-track.verified .slider-fill {
-  background: #e1f3d8;
+  background: rgba(6, 182, 212, 0.2);
 }
 
 .slider-hint {
   position: relative;
   z-index: 1;
   font-size: 14px;
-  color: #999;
+  color: #64748b;
   pointer-events: none;
 }
 
 .slider-hint.success {
-  color: #67c23a;
+  color: #22d3ee;
   font-weight: 600;
 }
 
@@ -150,28 +152,28 @@ function finishDrag() {
   top: 0;
   width: 44px;
   height: 44px;
-  background: #fff;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
+  background: rgba(241, 245, 249, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: grab;
   font-size: 18px;
-  color: #409eff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  color: #0891b2;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
   z-index: 2;
   transition: background 0.3s;
 }
 
 .slider-thumb.dragging {
   cursor: grabbing;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 }
 
 .slider-thumb.verified {
-  background: #67c23a;
-  border-color: #67c23a;
+  background: #06b6d4;
+  border-color: #06b6d4;
   color: #fff;
   cursor: default;
 }

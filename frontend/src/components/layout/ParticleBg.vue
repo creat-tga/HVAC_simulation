@@ -1,115 +1,107 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
-
-const canvasRef = ref<HTMLCanvasElement>()
-let animationId = 0
-
-interface Particle {
-  x: number
-  y: number
-  vx: number
-  vy: number
-  r: number
-}
-
-onMounted(() => {
-  const canvas = canvasRef.value
-  if (!canvas) return
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-
-  let w = 0
-  let h = 0
-  const particles: Particle[] = []
-  const PARTICLE_COUNT = 60
-  const CONNECT_DIST = 180
-  const SPEED = 0.5
-
-  function resize() {
-    w = canvas!.parentElement!.clientWidth
-    h = canvas!.parentElement!.clientHeight
-    canvas!.width = w
-    canvas!.height = h
-  }
-
-  function init() {
-    resize()
-    particles.length = 0
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      particles.push({
-        x: Math.random() * w,
-        y: Math.random() * h,
-        vx: (Math.random() - 0.5) * SPEED,
-        vy: (Math.random() - 0.5) * SPEED,
-        r: Math.random() * 2 + 0.8,
-      })
-    }
-  }
-
-  function draw() {
-    ctx!.clearRect(0, 0, w, h)
-    // Draw connections
-    for (let i = 0; i < particles.length; i++) {
-      for (let j = i + 1; j < particles.length; j++) {
-        const dx = particles[i].x - particles[j].x
-        const dy = particles[i].y - particles[j].y
-        const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < CONNECT_DIST) {
-          const opacity = (1 - dist / CONNECT_DIST) * 0.25
-          ctx!.strokeStyle = `rgba(64, 158, 255, ${opacity})`
-          ctx!.lineWidth = 0.8
-          ctx!.beginPath()
-          ctx!.moveTo(particles[i].x, particles[i].y)
-          ctx!.lineTo(particles[j].x, particles[j].y)
-          ctx!.stroke()
-        }
-      }
-    }
-    // Draw particles
-    for (const p of particles) {
-      ctx!.fillStyle = 'rgba(64, 158, 255, 0.4)'
-      ctx!.beginPath()
-      ctx!.arc(p.x, p.y, p.r, 0, Math.PI * 2)
-      ctx!.fill()
-    }
-  }
-
-  function update() {
-    for (const p of particles) {
-      p.x += p.vx
-      p.y += p.vy
-      if (p.x < 0 || p.x > w) p.vx *= -1
-      if (p.y < 0 || p.y > h) p.vy *= -1
-    }
-  }
-
-  function animate() {
-    update()
-    draw()
-    animationId = requestAnimationFrame(animate)
-  }
-
-  init()
-  animate()
-
-  const ro = new ResizeObserver(resize)
-  ro.observe(canvas.parentElement!)
-  onBeforeUnmount(() => {
-    cancelAnimationFrame(animationId)
-    ro.disconnect()
-  })
-})
+// HVAC-themed CSS background with thermal gradient blobs and engineering grid
 </script>
 
 <template>
-  <canvas ref="canvasRef" class="particle-bg" />
+  <div class="hvac-background">
+    <!-- Technical Grid Pattern -->
+    <div class="grid-pattern" />
+    <!-- Thermal Fluid Blobs -->
+    <div class="blob-container">
+      <div class="blob blob-cold" />
+      <div class="blob blob-warm" />
+      <div class="blob blob-neutral" />
+    </div>
+    <!-- Vignette Overlay -->
+    <div class="vignette" />
+  </div>
 </template>
 
 <style scoped>
-.particle-bg {
+.hvac-background {
   position: absolute;
   inset: 0;
-  pointer-events: none;
   z-index: 0;
+  pointer-events: none;
+  background: #f1f5f9;
+  overflow: hidden;
+}
+
+/* Engineering grid pattern */
+.grid-pattern {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0.7;
+}
+
+/* Fluid dynamics blobs container */
+.blob-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  filter: blur(80px);
+  opacity: 0.5;
+}
+
+/* Base blob style */
+.blob {
+  position: absolute;
+  border-radius: 50%;
+  animation: blob-float 18s infinite alternate ease-in-out;
+}
+
+/* Cold air (cyan) — top-left */
+.blob-cold {
+  top: -8%;
+  left: -8%;
+  width: 45%;
+  height: 45%;
+  background: rgba(6, 182, 212, 0.25);
+}
+
+/* Warm air (orange) — bottom-right */
+.blob-warm {
+  bottom: -10%;
+  right: -10%;
+  width: 50%;
+  height: 50%;
+  background: rgba(251, 146, 60, 0.15);
+  animation-delay: 2s;
+}
+
+/* Neutral mixed (blue) — center-right */
+.blob-neutral {
+  top: 35%;
+  left: 50%;
+  width: 35%;
+  height: 35%;
+  background: rgba(59, 130, 246, 0.18);
+  animation-delay: 4s;
+}
+
+/* Vignette depth overlay */
+.vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, transparent 0%, rgba(241, 245, 249, 0.5) 100%);
+}
+
+@keyframes blob-float {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(25px, -40px) scale(1.08);
+  }
+  66% {
+    transform: translate(-15px, 20px) scale(0.92);
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
 }
 </style>

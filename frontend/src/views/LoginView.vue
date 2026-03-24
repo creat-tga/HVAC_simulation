@@ -87,15 +87,55 @@ async function handleLogin() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #0f172a;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Gradient blob background */
+.login-page::before {
+  content: '';
+  position: absolute;
+  top: -15%;
+  left: -15%;
+  width: 55%;
+  height: 55%;
+  border-radius: 50%;
+  background: rgba(6, 182, 212, 0.15);
+  filter: blur(80px);
+  animation: login-blob 18s infinite alternate ease-in-out;
+}
+
+.login-page::after {
+  content: '';
+  position: absolute;
+  bottom: -15%;
+  right: -15%;
+  width: 60%;
+  height: 60%;
+  border-radius: 50%;
+  background: rgba(59, 130, 246, 0.12);
+  filter: blur(80px);
+  animation: login-blob 18s infinite alternate-reverse ease-in-out;
+}
+
+@keyframes login-blob {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(30px, -30px) scale(1.05); }
+  100% { transform: translate(0, 0) scale(1); }
 }
 
 .login-card {
   width: 420px;
   padding: 40px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 16px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  position: relative;
+  z-index: 1;
 }
 
 .login-header {
@@ -105,17 +145,51 @@ async function handleLogin() {
 
 .login-header h1 {
   margin: 0 0 8px;
-  font-size: 28px;
-  color: #303133;
+  font-size: 26px;
+  color: #e2e8f0;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .login-header p {
   margin: 0;
-  color: #909399;
+  color: #64748b;
   font-size: 14px;
 }
 
 .login-form {
   margin-top: 20px;
+}
+
+/* Override Element Plus input styles for dark login */
+.login-card :deep(.el-input__wrapper) {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  box-shadow: none !important;
+  border-radius: 10px;
+}
+
+.login-card :deep(.el-input__inner) {
+  color: #e2e8f0;
+}
+
+.login-card :deep(.el-input__inner::placeholder) {
+  color: #64748b;
+}
+
+.login-card :deep(.el-input__prefix .el-icon) {
+  color: #64748b;
+}
+
+.login-card :deep(.el-button--primary) {
+  background: linear-gradient(135deg, #06b6d4, #0284c7);
+  border: none;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.login-card :deep(.el-button--primary:hover) {
+  background: linear-gradient(135deg, #22d3ee, #0891b2);
 }
 </style>

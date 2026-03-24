@@ -22,7 +22,7 @@ import ParticleBg from '@/components/layout/ParticleBg.vue'
 <style scoped>
 .app-layout {
   height: 100vh;
-  background: #f0f2f5;
+  background: #f1f5f9;
 }
 
 .app-body {
@@ -33,9 +33,10 @@ import ParticleBg from '@/components/layout/ParticleBg.vue'
 .app-body :deep(.el-main) {
   overflow: hidden;
   position: relative;
-  background: linear-gradient(160deg, #f0f2f5 0%, #e8ecf1 50%, #f0f2f5 100%);
+  background: transparent;
   display: flex;
   flex-direction: column;
+  padding: 0;
 }
 
 .main-content {
@@ -43,5 +44,6 @@ import ParticleBg from '@/components/layout/ParticleBg.vue'
   z-index: 1;
   flex: 1;
   overflow: auto;
+  padding: 20px;
 }
 </style>

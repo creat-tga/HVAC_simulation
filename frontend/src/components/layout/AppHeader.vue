@@ -68,9 +68,12 @@ async function handleLogout() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #e8e8e8;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.6);
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  z-index: 10;
 }
 
 .header-left {
@@ -83,23 +86,28 @@ async function handleLogout() {
   width: 32px;
   height: 32px;
   flex-shrink: 0;
+  padding: 4px;
+  background: rgba(6, 182, 212, 0.1);
+  border-radius: 8px;
 }
 
 .platform-title {
   margin: 0;
-  font-size: 18px;
-  color: var(--el-color-primary);
+  font-size: 17px;
+  color: #0f172a;
   font-weight: 600;
   user-select: none;
   white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
 .platform-title-en {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  color: #94a3b8;
   user-select: none;
   white-space: nowrap;
   margin-left: 2px;
+  letter-spacing: 0.02em;
 }
 
 .header-right {
@@ -110,7 +118,14 @@ async function handleLogout() {
 
 .user-info {
   cursor: pointer;
-  color: var(--el-text-color-regular);
+  color: #475569;
   font-size: 14px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+
+.user-info:hover {
+  background: rgba(241, 245, 249, 0.8);
 }
 </style>

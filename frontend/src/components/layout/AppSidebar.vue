@@ -116,13 +116,15 @@ function onStepClick(step: NavStep) {
 
 <style scoped>
 .app-sidebar {
-  border-right: 1px solid #e8e8e8;
-  background: #fff;
+  border-right: 1px solid rgba(226, 232, 240, 0.5);
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   overflow-y: auto;
 }
 
 .step-nav {
-  padding: 20px 16px;
+  padding: 20px 12px;
 }
 
 .step-item {
@@ -149,21 +151,21 @@ function onStepClick(step: NavStep) {
 .step-dot {
   width: 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-secondary);
-  border: 2px solid var(--el-border-color);
-  transition: all 0.2s;
+  background: rgba(241, 245, 249, 0.8);
+  color: #94a3b8;
+  border: 1.5px solid rgba(226, 232, 240, 0.6);
+  transition: all 0.25s ease;
   flex-shrink: 0;
 }
 
 .step-line {
   width: 2px;
-  height: 16px;
-  background: var(--el-border-color);
+  height: 14px;
+  background: rgba(226, 232, 240, 0.5);
   transition: background 0.2s;
 }
 
@@ -172,30 +174,31 @@ function onStepClick(step: NavStep) {
 }
 
 .step-item.is-done .step-dot {
-  background: var(--el-color-primary-light-7);
-  border-color: var(--el-color-primary);
-  color: var(--el-color-primary);
+  background: rgba(6, 182, 212, 0.08);
+  border-color: rgba(6, 182, 212, 0.3);
+  color: #0891b2;
 }
 
 .step-item.is-done .step-line {
-  background: var(--el-color-primary);
+  background: rgba(6, 182, 212, 0.3);
 }
 
 .step-item.is-active .step-dot {
-  background: var(--el-color-primary);
-  border-color: var(--el-color-primary);
+  background: linear-gradient(135deg, #06b6d4, #0284c7);
+  border-color: transparent;
   color: #fff;
-  box-shadow: 0 0 0 4px var(--el-color-primary-light-7);
+  box-shadow: 0 2px 8px rgba(6, 182, 212, 0.3);
 }
 
 .step-item:not(.is-disabled):hover .step-dot {
-  border-color: var(--el-color-primary);
-  color: var(--el-color-primary);
+  border-color: rgba(6, 182, 212, 0.4);
+  color: #0891b2;
+  background: rgba(6, 182, 212, 0.06);
 }
 
 .step-label {
-  font-size: 14px;
-  color: var(--el-text-color-regular);
+  font-size: 13px;
+  color: #64748b;
   line-height: 32px;
   white-space: nowrap;
   overflow: hidden;
@@ -203,19 +206,19 @@ function onStepClick(step: NavStep) {
   transition: color 0.2s;
   user-select: none;
   min-width: 120px;
-}
-
-
-.step-item.is-active .step-label {
-  color: var(--el-color-primary);
   font-weight: 500;
 }
 
+.step-item.is-active .step-label {
+  color: #0891b2;
+  font-weight: 600;
+}
+
 .step-item.is-done .step-label {
-  color: var(--el-text-color-primary);
+  color: #334155;
 }
 
 .step-item:not(.is-disabled):hover .step-label {
-  color: var(--el-color-primary);
+  color: #0891b2;
 }
 </style>
