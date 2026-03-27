@@ -23,6 +23,7 @@ class Building(Base):
     location: Mapped[str | None] = mapped_column(String(200))
     climate_zone: Mapped[str | None] = mapped_column(String(50))
     envelope_params: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    zones: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

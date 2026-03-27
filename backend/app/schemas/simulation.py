@@ -88,3 +88,14 @@ class CarbonReport(BaseModel):
     total_carbon: float
     monthly_carbon: list[float]
     carbon_factor: float
+
+
+# Load Preview schema
+class LoadPreviewResponse(BaseModel):
+    hourly_cooling_load: list[float]
+    hourly_heating_load: list[float]
+    total_cooling_load: float
+    total_heating_load: float
+    peak_cooling_load: float
+    peak_heating_load: float
+    engine: str = "builtin"

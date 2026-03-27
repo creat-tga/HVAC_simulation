@@ -11,10 +11,23 @@ from app.schemas.simulation import (
     SimulationCreate,
     SimulationResponse,
     SimulationDetailResponse,
+    LoadPreviewResponse,
 )
 from app.services import simulation_service
 
 router = APIRouter(prefix="/buildings/{building_id}", tags=["仿真管理"])
+
+
+# --- Load Preview ---
+@router.post("/load-preview", response_model=LoadPreviewResponse)
+async def preview_load(
+    building_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+):
+    """预览建筑负荷（不保存，仅计算）"""
+    result = await simulation_service.preview_building_load(db, building_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="建筑不存在")
+    return result
 
 
 # --- HVAC Systems ---

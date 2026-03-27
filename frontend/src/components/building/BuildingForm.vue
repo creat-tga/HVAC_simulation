@@ -3,8 +3,10 @@ import { reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { BuildingCreate, EnvelopeParams } from '@/types/building'
 import type { FormInstance, FormRules } from 'element-plus'
+import { createNameValidator } from '@/utils'
 
 const { t } = useI18n()
+const validateName = createNameValidator(t)
 
 const emit = defineEmits<{
   submit: [data: BuildingCreate]
@@ -26,11 +28,15 @@ const form = reactive<BuildingCreate & { envelope_params: EnvelopeParams }>({
     people_density: 0.1,
     lighting_density: 10,
     equipment_density: 15,
+    fresh_air_volume: 30,
   },
 })
 
 const rules: FormRules = {
-  name: [{ required: true, message: () => t('building.pleaseInputName'), trigger: 'blur' }],
+  name: [
+    { required: true, message: () => t('building.pleaseInputName'), trigger: 'blur' },
+    { validator: validateName, trigger: 'change' },
+  ],
   building_type: [{ required: true, message: () => t('building.pleaseSelectType'), trigger: 'change' }],
   total_area: [{ required: true, message: () => t('building.pleaseInputArea'), trigger: 'blur' }],
   floor_count: [{ required: true, message: () => t('building.pleaseInputFloors'), trigger: 'blur' }],
@@ -44,27 +50,27 @@ const buildingTypes = [
 const TEMPLATES: Record<string, { area: number; floors: number; envelope: EnvelopeParams }> = {
   office: {
     area: 10000, floors: 10,
-    envelope: { wall_u_value: 0.8, window_u_value: 2.8, window_wall_ratio: 0.4, roof_u_value: 0.6, people_density: 0.1, lighting_density: 11, equipment_density: 15 },
+    envelope: { wall_u_value: 0.8, window_u_value: 2.8, window_wall_ratio: 0.4, roof_u_value: 0.6, people_density: 0.1, lighting_density: 11, equipment_density: 15, fresh_air_volume: 30 },
   },
   commercial: {
     area: 20000, floors: 4,
-    envelope: { wall_u_value: 0.7, window_u_value: 2.5, window_wall_ratio: 0.5, roof_u_value: 0.5, people_density: 0.15, lighting_density: 15, equipment_density: 10 },
+    envelope: { wall_u_value: 0.7, window_u_value: 2.5, window_wall_ratio: 0.5, roof_u_value: 0.5, people_density: 0.15, lighting_density: 15, equipment_density: 10, fresh_air_volume: 25 },
   },
   hotel: {
     area: 15000, floors: 15,
-    envelope: { wall_u_value: 0.8, window_u_value: 2.8, window_wall_ratio: 0.35, roof_u_value: 0.6, people_density: 0.05, lighting_density: 10, equipment_density: 8 },
+    envelope: { wall_u_value: 0.8, window_u_value: 2.8, window_wall_ratio: 0.35, roof_u_value: 0.6, people_density: 0.05, lighting_density: 10, equipment_density: 8, fresh_air_volume: 30 },
   },
   hospital: {
     area: 25000, floors: 12,
-    envelope: { wall_u_value: 0.6, window_u_value: 2.5, window_wall_ratio: 0.3, roof_u_value: 0.5, people_density: 0.08, lighting_density: 12, equipment_density: 20 },
+    envelope: { wall_u_value: 0.6, window_u_value: 2.5, window_wall_ratio: 0.3, roof_u_value: 0.5, people_density: 0.08, lighting_density: 12, equipment_density: 20, fresh_air_volume: 40 },
   },
   school: {
     area: 8000, floors: 5,
-    envelope: { wall_u_value: 1.0, window_u_value: 3.0, window_wall_ratio: 0.35, roof_u_value: 0.7, people_density: 0.3, lighting_density: 9, equipment_density: 5 },
+    envelope: { wall_u_value: 1.0, window_u_value: 3.0, window_wall_ratio: 0.35, roof_u_value: 0.7, people_density: 0.3, lighting_density: 9, equipment_density: 5, fresh_air_volume: 20 },
   },
   residential: {
     area: 5000, floors: 18,
-    envelope: { wall_u_value: 0.8, window_u_value: 2.8, window_wall_ratio: 0.3, roof_u_value: 0.6, people_density: 0.04, lighting_density: 6, equipment_density: 8 },
+    envelope: { wall_u_value: 0.8, window_u_value: 2.8, window_wall_ratio: 0.3, roof_u_value: 0.6, people_density: 0.04, lighting_density: 6, equipment_density: 8, fresh_air_volume: 30 },
   },
 }
 
@@ -89,7 +95,7 @@ async function handleSubmit() {
     <el-row :gutter="20">
       <el-col :span="12">
         <el-form-item :label="t('building.name')" prop="name">
-          <el-input v-model="form.name" :placeholder="t('building.pleaseInputName')" />
+          <el-input v-model="form.name" :placeholder="t('building.pleaseInputName')" :maxlength="30" show-word-limit />
         </el-form-item>
       </el-col>
       <el-col :span="12">
@@ -156,19 +162,24 @@ async function handleSubmit() {
     <el-divider>{{ t('building.internalGains.title') }}</el-divider>
 
     <el-row :gutter="20">
-      <el-col :span="8">
+      <el-col :span="6">
         <el-form-item :label="t('building.internalGains.people')">
           <el-input-number v-model="form.envelope_params.people_density" :min="0" :max="1" :precision="3" :step="0.01" style="width: 100%" />
         </el-form-item>
       </el-col>
-      <el-col :span="8">
+      <el-col :span="6">
         <el-form-item :label="t('building.internalGains.lighting')">
           <el-input-number v-model="form.envelope_params.lighting_density" :min="0" :max="50" :precision="1" :step="1" style="width: 100%" />
         </el-form-item>
       </el-col>
-      <el-col :span="8">
+      <el-col :span="6">
         <el-form-item :label="t('building.internalGains.equipment')">
           <el-input-number v-model="form.envelope_params.equipment_density" :min="0" :max="50" :precision="1" :step="1" style="width: 100%" />
+        </el-form-item>
+      </el-col>
+      <el-col :span="6">
+        <el-form-item :label="t('building.internalGains.freshAir')">
+          <el-input-number v-model="form.envelope_params.fresh_air_volume" :min="0" :max="200" :precision="1" :step="5" style="width: 100%" />
         </el-form-item>
       </el-col>
     </el-row>
@@ -179,3 +190,6 @@ async function handleSubmit() {
     </el-form-item>
   </el-form>
 </template>
+
+<style scoped>
+</style>

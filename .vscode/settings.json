@@ -3,5 +3,11 @@
   "python.analysis.extraPaths": [
     "${workspaceFolder}/backend/.venv/Lib/site-packages"
   ],
-  "python.languageServer": "Pylance"
+  "python.languageServer": "Pylance",
+  "cSpell.words": [
+    "checkpw",
+    "energyplus",
+    "gensalt",
+    "hashpw"
+  ]
 }

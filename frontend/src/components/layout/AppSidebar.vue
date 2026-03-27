@@ -8,6 +8,8 @@ import {
   Setting,
   DataAnalysis,
   Document,
+  Cpu,
+  Operation,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -20,8 +22,10 @@ const resultId = computed(() => route.params.resultId as string | undefined)
 
 // Determine which step is active based on current route
 const activeStep = computed(() => {
-  if (route.name === 'report') return 4
-  if (route.name === 'simulation') return 3
+  if (route.name === 'report') return 6
+  if (route.name === 'simulation') return 5
+  if (route.name === 'systemSelect') return 4
+  if (route.name === 'loadCalc') return 3
   if (route.name === 'building') return 2
   if (route.name === 'project') return 1
   return 0
@@ -58,6 +62,18 @@ const steps = computed<NavStep[]>(() => {
       label: t('nav.buildingConfig'),
       icon: Setting,
       path: `/projects/${projectId.value}/buildings/${buildingId.value}`,
+      enabled: true,
+    })
+    list.push({
+      label: t('nav.loadCalc'),
+      icon: Cpu,
+      path: `/projects/${projectId.value}/buildings/${buildingId.value}/load`,
+      enabled: true,
+    })
+    list.push({
+      label: t('nav.systemSelect'),
+      icon: Operation,
+      path: `/projects/${projectId.value}/buildings/${buildingId.value}/system`,
       enabled: true,
     })
     list.push({
@@ -98,6 +114,8 @@ function onStepClick(step: NavStep) {
           'is-active': index === activeStep,
           'is-done': index < activeStep,
           'is-disabled': !step.enabled,
+          'is-future': index > activeStep && step.enabled,
+          'is-next': index === activeStep + 1 && step.enabled,
         }"
         @click="onStepClick(step)"
       >
@@ -109,6 +127,7 @@ function onStepClick(step: NavStep) {
           <div class="step-line step-line-bottom" :class="{ invisible: index >= steps.length - 1 }" />
         </div>
         <span class="step-label">{{ step.label }}</span>
+        <span v-if="index === activeStep + 1 && step.enabled" class="next-hint">→</span>
       </div>
     </nav>
   </el-aside>
@@ -220,5 +239,43 @@ function onStepClick(step: NavStep) {
 
 .step-item:not(.is-disabled):hover .step-label {
   color: #0891b2;
+}
+
+/* Future steps (not yet reached) */
+.step-item.is-future .step-dot {
+  opacity: 0.4;
+}
+.step-item.is-future .step-label {
+  opacity: 0.45;
+}
+.step-item.is-future .step-line {
+  opacity: 0.3;
+}
+
+/* Next recommended step */
+.step-item.is-next .step-dot {
+  opacity: 0.85;
+  border-color: rgba(6, 182, 212, 0.4);
+  animation: next-pulse 2.5s ease-in-out infinite;
+}
+.step-item.is-next .step-label {
+  opacity: 0.85;
+  color: #0891b2;
+}
+.step-item.is-next:hover .step-dot {
+  opacity: 1;
+}
+
+.next-hint {
+  font-size: 14px;
+  color: #0891b2;
+  font-weight: 600;
+  margin-left: auto;
+  opacity: 0.6;
+}
+
+@keyframes next-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.12); }
 }
 </style>

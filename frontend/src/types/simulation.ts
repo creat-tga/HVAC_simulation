@@ -51,6 +51,15 @@ export interface SimulationCreate {
   simulation_type: string
 }
 
+export interface LoadPreview {
+  hourly_cooling_load: number[]
+  hourly_heating_load: number[]
+  total_cooling_load: number
+  total_heating_load: number
+  peak_cooling_load: number
+  peak_heating_load: number
+}
+
 export type SystemType = 'efficient_chiller_plant' | 'air_cooled_system' | 'gshp_system'
 
 export const SYSTEM_TYPE_LABELS: Record<SystemType, string> = {

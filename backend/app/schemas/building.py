@@ -1,9 +1,49 @@
 import uuid
 from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from typing import Any
 
+
+# ---------- Zone sub-models ----------
+
+class DaySchedule(BaseModel):
+    name: str
+    start_month: int = Field(..., ge=1, le=12)
+    start_day: int = Field(..., ge=1, le=31)
+    end_month: int = Field(..., ge=1, le=12)
+    end_day: int = Field(..., ge=1, le=31)
+    days: list[int]    # 1=Mon … 7=Sun
+    hours: list[int]   # 0-23
+    value: float
+
+
+class ParamConfig(BaseModel):
+    mode: Literal["fixed", "scheduled"]
+    fixed_value: float
+    schedules: list[DaySchedule] = []
+
+
+class BuildingZone(BaseModel):
+    name: str
+    area: float
+    floor_height: float = 3.5
+    # Envelope
+    wall_u_value: float = 0.6
+    window_u_value: float = 2.2
+    window_wall_ratio: float = 0.3
+    roof_u_value: float = 0.4
+    # Internal gains
+    people_density: ParamConfig
+    lighting_density: ParamConfig
+    equipment_density: ParamConfig
+    fresh_air_volume: ParamConfig
+    # Setpoints (optional for backward compat)
+    temperature: ParamConfig = ParamConfig(mode="fixed", fixed_value=26, schedules=[])
+    relative_humidity: ParamConfig = ParamConfig(mode="fixed", fixed_value=50, schedules=[])
+
+
+# ---------- Building CRUD schemas ----------
 
 class BuildingCreate(BaseModel):
     name: str = Field(..., max_length=200)
@@ -13,6 +53,7 @@ class BuildingCreate(BaseModel):
     location: str | None = Field(None, max_length=200)
     climate_zone: str | None = Field(None, max_length=50)
     envelope_params: dict[str, Any] | None = None
+    zones: list[BuildingZone] | None = None
 
 
 class BuildingUpdate(BaseModel):
@@ -23,6 +64,7 @@ class BuildingUpdate(BaseModel):
     location: str | None = Field(None, max_length=200)
     climate_zone: str | None = Field(None, max_length=50)
     envelope_params: dict[str, Any] | None = None
+    zones: list[BuildingZone] | None = None
 
 
 class BuildingResponse(BaseModel):
@@ -35,6 +77,7 @@ class BuildingResponse(BaseModel):
     location: str | None
     climate_zone: str | None
     envelope_params: dict[str, Any] | None
+    zones: list[BuildingZone] | None
     created_at: datetime
     updated_at: datetime
 

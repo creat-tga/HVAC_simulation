@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -8,6 +9,7 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., max_length=200)
     description: str | None = Field(None, max_length=2000)
     location: str | None = Field(None, max_length=200)
+    electricity_pricing: dict[str, Any] | None = None
 
 
 class BatchDeleteRequest(BaseModel):
@@ -18,6 +20,7 @@ class ProjectUpdate(BaseModel):
     name: str | None = Field(None, max_length=200)
     description: str | None = Field(None, max_length=2000)
     location: str | None = Field(None, max_length=200)
+    electricity_pricing: dict[str, Any] | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -25,6 +28,7 @@ class ProjectResponse(BaseModel):
     name: str
     description: str | None
     location: str | None
+    electricity_pricing: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
 
@@ -36,6 +40,7 @@ class ProjectListResponse(BaseModel):
     name: str
     description: str | None
     location: str | None
+    electricity_pricing: dict[str, Any] | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

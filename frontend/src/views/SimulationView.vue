@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Plus, Delete, Edit, VideoPlay } from '@element-plus/icons-vue'
+import { VideoPlay } from '@element-plus/icons-vue'
 import { useSimulationStore } from '@/stores/simulation'
-import { createHVACSystem, deleteHVACSystem, updateHVACSystem, runSimulation } from '@/api/simulation'
-import type { HVACSystemCreate, HVACSystem, SimulationCreate } from '@/types/simulation'
-import SystemConfig from '@/components/simulation/SystemConfig.vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { runSimulation } from '@/api/simulation'
+import type { SimulationCreate } from '@/types/simulation'
+import { ElMessage } from 'element-plus'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -16,170 +15,129 @@ const store = useSimulationStore()
 
 const buildingId = route.params.buildingId as string
 const projectId = route.params.projectId as string
-const systemDialogVisible = ref(false)
-const editingSystem = ref<HVACSystem | null>(null)
-const dialogTitle = computed(() => editingSystem.value ? t('system.editSystem') : t('system.add'))
+const simRunning = ref(false)
 
 onMounted(() => {
   store.fetchSystems(buildingId)
   store.fetchResults(buildingId)
 })
 
-function getSystemLabel(type: string) {
-  return t(`system.types.${type}`, type)
-}
-
-async function handleCreateSystem(data: HVACSystemCreate) {
-  if (editingSystem.value) {
-    await updateHVACSystem(buildingId, editingSystem.value.id, data)
-    ElMessage.success(t('system.updateSuccess'))
-  } else {
-    await createHVACSystem(buildingId, data)
-    ElMessage.success(t('system.createSuccess'))
-  }
-  systemDialogVisible.value = false
-  editingSystem.value = null
-  store.fetchSystems(buildingId)
-}
-
-function handleEditSystem(system: HVACSystem) {
-  editingSystem.value = system
-  systemDialogVisible.value = true
-}
-
-function openCreateDialog() {
-  editingSystem.value = null
-  systemDialogVisible.value = true
-}
-
-async function handleDeleteSystem(systemId: string) {
-  await ElMessageBox.confirm(t('system.deleteConfirm'), t('common.warning'), { type: 'warning' })
-  await deleteHVACSystem(buildingId, systemId)
-  ElMessage.success(t('system.deleteSuccess'))
-  store.fetchSystems(buildingId)
-}
-
 async function handleRunSimulation() {
   if (store.systems.length === 0) {
     ElMessage.warning(t('system.pleaseAddSystem'))
     return
   }
-  const data: SimulationCreate = { simulation_type: 'full_year' }
-  await runSimulation(buildingId, data)
-  ElMessage.success(t('simulation.taskCreated'))
-  store.fetchResults(buildingId)
+  simRunning.value = true
+  try {
+    const data: SimulationCreate = { simulation_type: 'full_year' }
+    await runSimulation(buildingId, data)
+    ElMessage.success(t('simulation.taskCreated'))
+    store.fetchResults(buildingId)
+  } catch {
+    ElMessage.error(t('simulation.runFailed'))
+  } finally {
+    simRunning.value = false
+  }
 }
 
 function viewReport(resultId: string) {
   router.push(`/projects/${projectId}/buildings/${buildingId}/report/${resultId}`)
+}
+
+function goBack() {
+  router.push(`/projects/${projectId}/buildings/${buildingId}/system`)
 }
 </script>
 
 <template>
   <div class="simulation-view">
     <div class="page-header">
-      <h1>{{ t('simulation.title') }}</h1>
-      <el-button type="success" :icon="VideoPlay" @click="handleRunSimulation">
-        {{ t('simulation.run') }}
-      </el-button>
+      <h1>{{ t('simulation.steps.energySimulation') }}</h1>
     </div>
 
-    <!-- HVAC Systems -->
-    <el-card class="section-card">
-      <template #header>
-        <div class="section-header">
-          <span>{{ t('system.title') }}</span>
-          <el-button type="primary" :icon="Plus" size="small" @click="openCreateDialog">
-            {{ t('system.add') }}
+    <el-card>
+      <div class="step-desc">
+        <p>{{ t('simulation.energyStep.description') }}</p>
+        <div v-if="store.loadPreviewData" class="load-reference">
+          <el-tag type="info" effect="plain">
+            {{ t('simulation.loadPreview.peakCooling') }}: {{ store.loadPreviewData.peak_cooling_load.toFixed(1) }} kW
+          </el-tag>
+          <el-tag type="warning" effect="plain">
+            {{ t('simulation.loadPreview.peakHeating') }}: {{ store.loadPreviewData.peak_heating_load.toFixed(1) }} kW
+          </el-tag>
+          <el-tag type="success" effect="plain">
+            {{ t('system.title') }}: {{ store.systems.length }} {{ t('simulation.systemCount') }}
+          </el-tag>
+        </div>
+      </div>
+
+      <div v-if="!store.systemConfigured" class="hint-area">
+        <el-empty :description="t('simulation.energyStep.hint')">
+          <el-button type="primary" @click="goBack">{{ t('system.add') }}</el-button>
+        </el-empty>
+      </div>
+
+      <template v-else>
+        <div class="run-action">
+          <el-button
+            type="success"
+            size="large"
+            :icon="VideoPlay"
+            :loading="simRunning"
+            @click="handleRunSimulation"
+          >
+            {{ simRunning ? t('simulation.loadPreview.running') : t('simulation.run') }}
           </el-button>
         </div>
+
+        <!-- Results Table -->
+        <div v-if="store.results.length > 0" class="results-section">
+          <h3>{{ t('simulation.results') }}</h3>
+          <el-table :data="store.results" stripe>
+            <el-table-column prop="simulation_type" :label="t('simulation.type')" width="120" />
+            <el-table-column :label="t('simulation.status')" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'completed' ? 'success' : row.status === 'failed' ? 'danger' : 'warning'">
+                  {{ t(`simulation.statusLabels.${row.status}`) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="total_energy" :label="t('simulation.totalEnergy')" width="140" />
+            <el-table-column prop="total_cost" :label="t('simulation.totalCost')" width="140" />
+            <el-table-column prop="total_carbon" :label="t('simulation.totalCarbon')" width="140" />
+            <el-table-column :label="t('simulation.createdAt')">
+              <template #default="{ row }">
+                {{ new Date(row.created_at).toLocaleString() }}
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('common.operation')" width="100" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  v-if="row.status === 'completed'"
+                  type="primary"
+                  size="small"
+                  text
+                  @click="viewReport(row.id)"
+                >
+                  {{ t('simulation.viewReport') }}
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </template>
-
-      <el-table :data="store.systems" v-loading="store.loading" stripe>
-        <el-table-column prop="name" :label="t('system.name')" />
-        <el-table-column :label="t('system.type')" width="150">
-          <template #default="{ row }">
-            <el-tag>{{ getSystemLabel(row.system_type) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="capacity" :label="t('system.capacity')" width="120" />
-        <el-table-column prop="cop" label="COP" width="100" />
-        <el-table-column :label="t('common.operation')" width="120">
-          <template #default="{ row }">
-            <el-button
-              type="primary"
-              size="small"
-              text
-              :icon="Edit"
-              @click="handleEditSystem(row)"
-            />
-            <el-button
-              type="danger"
-              size="small"
-              text
-              :icon="Delete"
-              @click="handleDeleteSystem(row.id)"
-            />
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <el-empty v-if="store.systems.length === 0" :description="t('system.noSystems')" />
     </el-card>
 
-    <!-- Simulation Results -->
-    <el-card class="section-card">
-      <template #header>
-        <span>{{ t('simulation.results') }}</span>
-      </template>
-
-      <el-table :data="store.results" stripe>
-        <el-table-column prop="simulation_type" :label="t('simulation.type')" width="120" />
-        <el-table-column :label="t('simulation.status')" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 'completed' ? 'success' : row.status === 'failed' ? 'danger' : 'warning'">
-              {{ t(`simulation.statusLabels.${row.status}`) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="total_energy" :label="t('simulation.totalEnergy')" width="140" />
-        <el-table-column prop="total_cost" :label="t('simulation.totalCost')" width="140" />
-        <el-table-column prop="total_carbon" :label="t('simulation.totalCarbon')" width="140" />
-        <el-table-column :label="t('simulation.createdAt')">
-          <template #default="{ row }">
-            {{ new Date(row.created_at).toLocaleString() }}
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('common.operation')" width="100" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              v-if="row.status === 'completed'"
-              type="primary"
-              size="small"
-              text
-              @click="viewReport(row.id)"
-            >
-              {{ t('simulation.viewReport') }}
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <el-empty v-if="store.results.length === 0" :description="t('simulation.noResults')" />
-    </el-card>
-
-    <el-dialog v-model="systemDialogVisible" :title="dialogTitle" width="700px">
-      <SystemConfig :key="editingSystem?.id ?? 'new'" :initial-data="editingSystem" @submit="handleCreateSystem" @cancel="systemDialogVisible = false" />
-    </el-dialog>
+    <!-- Navigation -->
+    <div class="nav-buttons">
+      <el-button @click="goBack">&larr; {{ t('simulation.steps.systemConfig') }}</el-button>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .page-header h1 {
@@ -190,13 +148,45 @@ function viewReport(resultId: string) {
   letter-spacing: -0.02em;
 }
 
-.section-card {
+.step-desc {
   margin-bottom: 20px;
 }
 
-.section-header {
+.step-desc p {
+  color: #64748b;
+  font-size: 14px;
+  margin: 0;
+}
+
+.load-reference {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.run-action {
+  text-align: center;
+  margin: 20px 0;
+}
+
+.hint-area {
+  min-height: 150px;
+}
+
+.results-section {
+  margin-top: 24px;
+}
+
+.results-section h3 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.nav-buttons {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 24px;
 }
 </style>

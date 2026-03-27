@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from sqlalchemy import select
@@ -8,11 +9,16 @@ from app.models.building import Building
 from app.models.simulation import HVACSystem, SimulationResult
 from app.schemas.simulation import HVACSystemCreate, HVACSystemUpdate, SimulationCreate
 from app.simulation.load_generator import generate_hourly_loads
+from app.simulation.energyplus.runner import EnergyPlusRunner
 from app.simulation.systems.base import SystemSpec, SimulationInput
 from app.simulation.systems.chiller import ChillerSystem
 from app.simulation.systems.air_cooled import AirCooledSystem
 from app.simulation.systems.free_cooling import FreeCoolingSystem
 from app.simulation.systems.gshp import GSHPSystem
+
+log = logging.getLogger(__name__)
+
+_ep_runner = EnergyPlusRunner()
 
 SYSTEM_MODEL_MAP = {
     "efficient_chiller_plant": ChillerSystem,
@@ -67,6 +73,67 @@ async def delete_hvac_system(db: AsyncSession, system_id: uuid.UUID) -> bool:
     return True
 
 
+async def _generate_loads(
+    building_type: str,
+    total_area: float,
+    climate_zone: str,
+    zones: list[dict] | None,
+    envelope_params: dict | None,
+) -> tuple[list[float], list[float], str]:
+    """Generate hourly loads; returns (cooling, heating, engine_used).
+
+    Tries EnergyPlus first when zones are available, falls back to the
+    built-in heat-balance model on any failure.
+    """
+    if zones and _ep_runner.is_available():
+        try:
+            log.info("Running EnergyPlus load simulation (%d zones, %s)", len(zones), climate_zone)
+            cooling, heating = await _ep_runner.run_load_simulation(
+                zones, climate_zone, building_type
+            )
+            log.info("EnergyPlus completed successfully")
+            return cooling, heating, "energyplus"
+        except Exception as exc:
+            log.warning("EnergyPlus failed, falling back to built-in model: %s", exc)
+    else:
+        log.info("EP skip: zones=%s, ep_available=%s", bool(zones), _ep_runner.is_available())
+
+    cooling, heating = generate_hourly_loads(
+        building_type, total_area, climate_zone, zones=zones, envelope_params=envelope_params
+    )
+    return cooling, heating, "builtin"
+
+
+# Load Preview (calculate only, no save)
+async def preview_building_load(
+    db: AsyncSession, building_id: uuid.UUID
+) -> dict | None:
+    """Generate hourly loads for a building without saving to DB."""
+    building = await db.get(Building, building_id)
+    if not building:
+        return None
+
+    building_type = building.building_type or "office"
+    total_area = building.total_area or 10000.0
+    climate_zone = building.climate_zone or "hot_summer_cold_winter"
+    envelope_params = building.envelope_params
+    zones = building.zones
+
+    hourly_cooling, hourly_heating, engine = await _generate_loads(
+        building_type, total_area, climate_zone, zones, envelope_params
+    )
+
+    return {
+        "hourly_cooling_load": hourly_cooling,
+        "hourly_heating_load": hourly_heating,
+        "total_cooling_load": round(sum(hourly_cooling), 2),
+        "total_heating_load": round(sum(hourly_heating), 2),
+        "peak_cooling_load": round(max(hourly_cooling), 2) if hourly_cooling else 0.0,
+        "peak_heating_load": round(max(hourly_heating), 2) if hourly_heating else 0.0,
+        "engine": engine,
+    }
+
+
 # Simulation
 async def get_simulation_results(
     db: AsyncSession, building_id: uuid.UUID
@@ -98,10 +165,11 @@ async def create_simulation(
     total_area = building.total_area or 10000.0
     climate_zone = building.climate_zone or "hot_summer_cold_winter"
     envelope_params = building.envelope_params
+    zones = building.zones
 
     # Generate 8760 hourly loads
-    hourly_cooling, hourly_heating = generate_hourly_loads(
-        building_type, total_area, climate_zone, envelope_params
+    hourly_cooling, hourly_heating, engine = await _generate_loads(
+        building_type, total_area, climate_zone, zones, envelope_params
     )
 
     total_cooling = round(sum(hourly_cooling), 2)

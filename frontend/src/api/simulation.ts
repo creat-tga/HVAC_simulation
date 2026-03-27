@@ -6,7 +6,13 @@ import type {
   SimulationResult,
   SimulationDetail,
   SimulationCreate,
+  LoadPreview,
 } from '@/types/simulation'
+
+// Load Preview
+export function previewLoad(buildingId: string) {
+  return api.post<LoadPreview>(`/buildings/${buildingId}/load-preview`)
+}
 
 // HVAC Systems
 export function getHVACSystems(buildingId: string) {
