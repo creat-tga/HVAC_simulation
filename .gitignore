@@ -33,3 +33,12 @@ Thumbs.db
 
 # Build artifacts
 *.tsbuildinfo
+
+# 临时文件
+.temp/
+
+# 气象数据
+*.epw
+
+# Rust
+table-processor/
