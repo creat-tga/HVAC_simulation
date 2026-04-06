@@ -24,10 +24,22 @@ class ParamConfig(BaseModel):
     schedules: list[DaySchedule] = []
 
 
+class WallConfig(BaseModel):
+    """Per-wall exterior/interior setting."""
+    south_exterior: bool = True
+    north_exterior: bool = True
+    east_exterior: bool = True
+    west_exterior: bool = True
+
+
 class BuildingZone(BaseModel):
     name: str
     area: float
     floor_height: float = 3.5
+    # Zone vertical position: determines floor/roof boundary conditions
+    zone_position: Literal["top", "middle", "bottom", "single"] = "single"
+    # Wall exterior/interior config
+    wall_config: WallConfig = WallConfig()
     # Envelope
     wall_u_value: float = 0.6
     window_u_value: float = 2.2

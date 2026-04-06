@@ -3,12 +3,11 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.models.building import Building
+from app.models.project import Project
 from app.models.simulation import HVACSystem, SimulationResult
 from app.schemas.simulation import HVACSystemCreate, HVACSystemUpdate, SimulationCreate
-from app.simulation.load_generator import generate_hourly_loads
 from app.simulation.energyplus.runner import EnergyPlusRunner
 from app.simulation.systems.base import SystemSpec, SimulationInput
 from app.simulation.systems.chiller import ChillerSystem
@@ -74,34 +73,39 @@ async def delete_hvac_system(db: AsyncSession, system_id: uuid.UUID) -> bool:
 
 
 async def _generate_loads(
-    building_type: str,
-    total_area: float,
-    climate_zone: str,
+    location: list[str],
     zones: list[dict] | None,
-    envelope_params: dict | None,
-) -> tuple[list[float], list[float], str]:
-    """Generate hourly loads; returns (cooling, heating, engine_used).
+) -> tuple[list[float], list[float]]:
+    """Generate hourly loads via EnergyPlus; returns (cooling, heating)."""
+    if not _ep_runner.is_available():
+        raise RuntimeError("EnergyPlus is not installed or not configured")
+    if not zones:
+        raise ValueError("Building zones are required for EnergyPlus simulation")
 
-    Tries EnergyPlus first when zones are available, falls back to the
-    built-in heat-balance model on any failure.
-    """
-    if zones and _ep_runner.is_available():
-        try:
-            log.info("Running EnergyPlus load simulation (%d zones, %s)", len(zones), climate_zone)
-            cooling, heating = await _ep_runner.run_load_simulation(
-                zones, climate_zone, building_type
-            )
-            log.info("EnergyPlus completed successfully")
-            return cooling, heating, "energyplus"
-        except Exception as exc:
-            log.warning("EnergyPlus failed, falling back to built-in model: %s", exc)
-    else:
-        log.info("EP skip: zones=%s, ep_available=%s", bool(zones), _ep_runner.is_available())
-
-    cooling, heating = generate_hourly_loads(
-        building_type, total_area, climate_zone, zones=zones, envelope_params=envelope_params
+    zones_dict = {z.get("id", str(i)): z for i, z in enumerate(zones)}
+    log.info("Running EnergyPlus load simulation (%d zones, %s)", len(zones), location)
+    cooling, heating = await _ep_runner.run_load_simulation(
+        zones_dict, location
     )
-    return cooling, heating, "builtin"
+    log.info("EnergyPlus completed successfully")
+    return cooling, heating
+
+
+def _parse_location(loc_str: str | None) -> list[str]:
+    """Parse location string (e.g. "广东-广州") into [province, city]."""
+    if not loc_str:
+        return ["上海", "上海"]
+    parts = loc_str.split("-")
+    if len(parts) >= 2:
+        return parts[:2]
+    return [parts[0], parts[0]]
+
+
+async def _get_building_location(db: AsyncSession, building: Building) -> list[str]:
+    """Get location list for a building, preferring project's location."""
+    project = await db.get(Project, building.project_id)
+    project_loc = project.location if project else None
+    return _parse_location(project_loc or building.location)
 
 
 # Load Preview (calculate only, no save)
@@ -113,15 +117,10 @@ async def preview_building_load(
     if not building:
         return None
 
-    building_type = building.building_type or "office"
-    total_area = building.total_area or 10000.0
-    climate_zone = building.climate_zone or "hot_summer_cold_winter"
-    envelope_params = building.envelope_params
     zones = building.zones
+    location = await _get_building_location(db, building)
 
-    hourly_cooling, hourly_heating, engine = await _generate_loads(
-        building_type, total_area, climate_zone, zones, envelope_params
-    )
+    hourly_cooling, hourly_heating = await _generate_loads(location, zones)
 
     return {
         "hourly_cooling_load": hourly_cooling,
@@ -130,7 +129,6 @@ async def preview_building_load(
         "total_heating_load": round(sum(hourly_heating), 2),
         "peak_cooling_load": round(max(hourly_cooling), 2) if hourly_cooling else 0.0,
         "peak_heating_load": round(max(hourly_heating), 2) if hourly_heating else 0.0,
-        "engine": engine,
     }
 
 
@@ -161,16 +159,11 @@ async def create_simulation(
     if not building:
         raise ValueError("建筑不存在")
 
-    building_type = building.building_type or "office"
-    total_area = building.total_area or 10000.0
-    climate_zone = building.climate_zone or "hot_summer_cold_winter"
-    envelope_params = building.envelope_params
     zones = building.zones
+    location = await _get_building_location(db, building)
 
     # Generate 8760 hourly loads
-    hourly_cooling, hourly_heating, engine = await _generate_loads(
-        building_type, total_area, climate_zone, zones, envelope_params
-    )
+    hourly_cooling, hourly_heating = await _generate_loads(location, zones)
 
     total_cooling = round(sum(hourly_cooling), 2)
     total_heating = round(sum(hourly_heating), 2)

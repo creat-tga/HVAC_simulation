@@ -15,10 +15,25 @@ export interface ParamConfig {
   schedules: DaySchedule[]
 }
 
+/** Zone vertical position in the building */
+export type ZonePosition = 'top' | 'middle' | 'bottom' | 'single'
+
+/** Per-wall exterior/interior setting */
+export interface WallConfig {
+  south_exterior: boolean
+  north_exterior: boolean
+  east_exterior: boolean
+  west_exterior: boolean
+}
+
 export interface BuildingZone {
   name: string
   area: number
   floor_height: number
+  // Zone position (determines floor/roof boundary conditions)
+  zone_position: ZonePosition
+  // Wall exterior/interior config
+  wall_config: WallConfig
   // Envelope
   wall_u_value: number
   window_u_value: number

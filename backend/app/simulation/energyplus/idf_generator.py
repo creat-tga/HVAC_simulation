@@ -25,19 +25,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# 气候区 → 代表性城市位置数据
-# 包含纬度、经度、时区（东八区）、海拔高度
-# 用于 Site:Location 对象填充
-# ---------------------------------------------------------------------------
-
-CLIMATE_ZONE_LOCATIONS: dict[str, dict[str, Any]] = {
-    "severe_cold": {"name": "Harbin",    "lat": 45.75, "lon": 126.77, "tz": 8, "elev": 142.3},   # 严寒区 - 哈尔滨
-    "cold":        {"name": "Beijing",   "lat": 39.93, "lon": 116.28, "tz": 8, "elev": 32.0},    # 寒冷区 - 北京
-    "hot_summer_cold_winter": {"name": "Shanghai", "lat": 31.17, "lon": 121.43, "tz": 8, "elev": 7.0},  # 夏热冬冷区 - 上海
-    "hot_summer_warm_winter": {"name": "Guangzhou", "lat": 23.13, "lon": 113.32, "tz": 8, "elev": 41.0}, # 夏热冬暖区 - 广州
-    "mild":        {"name": "Kunming",   "lat": 25.02, "lon": 102.68, "tz": 8, "elev": 1892.4},  # 温和区 - 昆明
-}
+from app.simulation.energyplus.weather_utils import find_epw_for_location
 
 # 冷热设定温度之间的死区宽度 [°C]
 # 例：冷却设定26°C → 加热设定 = 26 - 6 = 20°C
@@ -46,6 +34,95 @@ SETPOINT_DEADBAND = 6.0
 # 表面膜热阻 [m²·K/W]（GB 50176 标准参考值）
 FILM_R_INT = 0.12   # 内表面膜热阻（对流+辐射）
 FILM_R_EXT = 0.04   # 外表面膜热阻
+
+
+# ---------------------------------------------------------------------------
+# 参数校验
+# ---------------------------------------------------------------------------
+
+# 各字段的取值范围约束: (min, max)
+_ZONE_FIELD_RANGES: dict[str, tuple[float, float]] = {
+    "area":              (0.1,   1_000_000),   # m²
+    "floor_height":      (1.0,   50.0),        # m
+    "wall_u_value":      (0.01,  20.0),        # W/m²·K
+    "window_u_value":    (0.1,   20.0),        # W/m²·K
+    "window_wall_ratio": (0.0,   1.0),
+    "roof_u_value":      (0.01,  20.0),        # W/m²·K
+}
+
+
+class ZoneValidationError(ValueError):
+    """热区参数校验失败。"""
+
+
+def _validate_param_config(
+    zone_id: str, key: str, value: Any
+) -> None:
+    """校验 ParamConfig 类型字段（people_density, lighting_density 等）。"""
+    if value is None:
+        raise ZoneValidationError(
+            f"zone '{zone_id}': 缺少必填字段 '{key}'"
+        )
+    if isinstance(value, (int, float)):
+        return
+    if not isinstance(value, dict):
+        raise ZoneValidationError(
+            f"zone '{zone_id}': 字段 '{key}' 类型错误，"
+            f"期望 int/float/dict(ParamConfig)，实际为 {type(value).__name__}"
+        )
+    mode = value.get("mode")
+    if mode not in ("fixed", "scheduled"):
+        raise ZoneValidationError(
+            f"zone '{zone_id}': 字段 '{key}' 的 mode 值无效，"
+            f"期望 'fixed' 或 'scheduled'，实际为 {mode!r}"
+        )
+    if "fixed_value" not in value:
+        raise ZoneValidationError(
+            f"zone '{zone_id}': 字段 '{key}' 缺少 'fixed_value'"
+        )
+    if not isinstance(value["fixed_value"], (int, float)):
+        raise ZoneValidationError(
+            f"zone '{zone_id}': 字段 '{key}' 的 fixed_value 类型错误，"
+            f"期望数值，实际为 {type(value['fixed_value']).__name__}"
+        )
+    if mode == "scheduled":
+        schedules = value.get("schedules")
+        if not isinstance(schedules, list):
+            raise ZoneValidationError(
+                f"zone '{zone_id}': 字段 '{key}' 的 schedules 类型错误，"
+                f"期望 list，实际为 {type(schedules).__name__}"
+            )
+
+
+def _validate_zone(zone_id: str, zone: dict[str, Any]) -> None:
+    """校验单个热区的所有必填字段。"""
+    if not isinstance(zone, dict):
+        raise ZoneValidationError(
+            f"zone '{zone_id}': zone 数据类型错误，期望 dict，实际为 {type(zone).__name__}"
+        )
+
+    # 校验数值型必填字段
+    for key, (lo, hi) in _ZONE_FIELD_RANGES.items():
+        if key not in zone:
+            raise ZoneValidationError(
+                f"zone '{zone_id}': 缺少必填字段 '{key}'"
+            )
+        val = zone[key]
+        if not isinstance(val, (int, float)):
+            raise ZoneValidationError(
+                f"zone '{zone_id}': 字段 '{key}' 类型错误，"
+                f"期望 int/float，实际为 {type(val).__name__}"
+            )
+        if not (lo <= val <= hi):
+            raise ZoneValidationError(
+                f"zone '{zone_id}': 字段 '{key}' 值超限，"
+                f"允许范围 [{lo}, {hi}]，实际值为 {val}"
+            )
+
+    # 校验 ParamConfig 型必填字段
+    for key in ("people_density", "lighting_density", "equipment_density",
+                "fresh_air_volume", "temperature"):
+        _validate_param_config(zone_id, key, zone.get(key))
 
 # ---------------------------------------------------------------------------
 # 工具函数
@@ -72,14 +149,13 @@ def _vstr(x: float, y: float, z: float) -> str:
 
 
 def generate_idf(
-    zones: list[dict[str, Any]],
-    climate_zone: str,
-    building_type: str = "office",
+    zones: dict[str, dict[str, Any]],
+    location: list[str],
 ) -> str:
-    """根据热区列表和气候区信息生成完整的 EnergyPlus IDF 字符串。
+    """根据热区字典和地理位置信息生成完整的 EnergyPlus IDF 字符串。
 
     参数:
-        zones: 热区数据列表，每个元素是一个字典，包含以下字段：
+        zones: 热区数据字典，键为 zone_id，值为包含以下字段的字典：
             - name: 热区名称（如 "Office"）
             - area: 建筑面积 [m²]
             - floor_height: 层高 [m]
@@ -92,11 +168,8 @@ def generate_idf(
             - equipment_density: 设备功率密度 [W/m²]（ParamConfig 格式）
             - fresh_air_volume: 新风量 [m³/h·人]（ParamConfig 格式）
             - temperature: 温度设定 [°C]（ParamConfig 格式）
-        climate_zone: 气候区标识，可选值：
-            "severe_cold"（严寒）, "cold"（寒冷）,
-            "hot_summer_cold_winter"（夏热冬冷）,
-            "hot_summer_warm_winter"（夏热冬暖）, "mild"（温和）
-        building_type: 建筑类型标识（用于 Building 对象命名）
+        location: 地理位置，格式 [省份, 城市]，如 ["广东", "广州"]。
+            用于查找对应的 EPW 气象文件并提取位置和地温数据。
 
     返回:
         完整的 IDF 文本字符串
@@ -114,13 +187,22 @@ def generate_idf(
               value（该时段的值）
     """
     # ---- 第一部分：全局设置（版本、仿真控制、建筑、时间步长等）----
+    if not isinstance(zones, dict) or not zones:
+        raise ZoneValidationError("zones 不能为空且必须为 dict 类型")
+    if not isinstance(location, list) or len(location) < 2:
+        raise ZoneValidationError("location 必须为 [省份, 城市] 格式的列表")
+
+    # 先校验所有热区参数，全部通过后再生成
+    for zone_id, zone in zones.items():
+        _validate_zone(zone_id, zone)
+
     parts: list[str] = [
         _global_version(),
         _global_sim_control(),
-        _global_building(building_type),
+        _global_building(),
         _global_timestep(),
         _global_run_period(),
-        _global_location(climate_zone),
+        _global_location(location),
         _global_geometry_rules(),
         _global_schedule_types(),
         _constant_schedules(),
@@ -133,13 +215,13 @@ def generate_idf(
     # 重名检测计数器：同名 zone 自动追加序号（如 Office, Office_2, Office_3）
     # 避免 EnergyPlus 因重复对象名报 Severe Error
     name_counts: dict[str, int] = {}
-    for idx, zone in enumerate(zones):
-        raw = _sn(zone.get("name", f"Zone_{idx + 1}"))
+    for zone_id, zone in zones.items():
+        raw = _sn(zone.get("name", zone_id))
         name_counts[raw] = name_counts.get(raw, 0) + 1
         zn = raw if name_counts[raw] == 1 else f"{raw}_{name_counts[raw]}"
         zone_names.append(zn)
-        area = zone.get("area", 100.0)      # 建筑面积 [m²]
-        fh = zone.get("floor_height", 3.0)  # 层高 [m]
+        area = zone["area"]
+        fh = zone["floor_height"]
         side = math.sqrt(area)               # shoebox 正方形边长 [m]
 
         # 区域定义对象
@@ -147,7 +229,10 @@ def generate_idf(
         # 围护结构材料和构造
         parts.append(_materials_constructions(zn, zone))
         # 几何体（地板、屋顶、4面墙 + 窗户）
-        parts.append(_zone_geometry(zn, side, side, fh, zone.get("window_wall_ratio", 0.4), x_offset))
+        zone_pos = zone.get("zone_position", "single")
+        wall_cfg = zone.get("wall_config", {})
+        parts.append(_zone_geometry(zn, side, side, fh, zone["window_wall_ratio"], x_offset,
+                                    zone_pos, wall_cfg))
 
         # ---- Schedule 生成（内部得热 + 温度设定）----
         # 注意：新风量(fresh_air_volume)单独处理，不在此循环中
@@ -155,27 +240,22 @@ def generate_idf(
         for key in ("people_density", "lighting_density", "equipment_density",
                      "temperature"):
             sn = f"{zn}_{key}"  # schedule 命名：区域名_参数名
-            val = zone.get(key)
-            # 温度未指定时默认 26°C（防止 EP 使用 0°C）
-            if key == "temperature" and val is None:
-                val = 26.0
+            val = zone[key]
             # 温度类 schedule 的非工作时段保持设定温度（而非 0）
             # 内部得热类 schedule 的非工作时段为 0（无人无灯无设备）
             off = None  # 默认 off_value=0
             if key == "temperature" and isinstance(val, dict):
-                off = val.get("fixed_value", 26.0)
+                off = val["fixed_value"]
             parts.append(_param_config_schedule(sn, val, off_value=off))
             sched_map[key] = sn
 
         # ---- 供暖温度设定 = 供冷温度 - 死区 ----
         # 例：供冷 26°C → 供暖 20°C（死区 6°C）
         ht_sn = f"{zn}_heating_sp"
-        temp_val = zone.get("temperature")
-        if temp_val is None:
-            temp_val = 26.0
+        temp_val = zone["temperature"]
         ht_off = None
         if isinstance(temp_val, dict):
-            ht_off = temp_val.get("fixed_value", 26.0) - SETPOINT_DEADBAND
+            ht_off = temp_val["fixed_value"] - SETPOINT_DEADBAND
         parts.append(_offset_schedule(ht_sn, temp_val, -SETPOINT_DEADBAND, off_value=ht_off))
         sched_map["heating_sp"] = ht_sn
 
@@ -189,13 +269,13 @@ def generate_idf(
         #   1. 取所有 schedule 中的最大值作为设计新风量
         #   2. 生成 0~1 的比例 schedule（实际值/最大值）
         #   3. 通过 DSOA 的 schedule 字段控制新风量随时间变化
-        fa_param = zone.get("fresh_air_volume")
+        fa_param = zone["fresh_air_volume"]
         if (isinstance(fa_param, dict)
                 and fa_param.get("mode") == "scheduled"
                 and fa_param.get("schedules")):
             # 找到所有时段中的最大新风量作为设计值
             all_vals = [s.get("value", 0) for s in fa_param["schedules"]]
-            max_val = max(max(all_vals), fa_param.get("fixed_value", 30.0))
+            max_val = max(max(all_vals), fa_param["fixed_value"])
             oa_per_person = max_val / 3600.0  # m³/h → m³/s
             # 生成比例系数 schedule（非工作时段为 0，即无新风）
             oa_sched_name = f"{zn}_OA_Frac"
@@ -210,7 +290,7 @@ def generate_idf(
             parts.append(_param_config_schedule(oa_sched_name, oa_param))
         else:
             # 固定模式：使用 fixed_value 作为恒定新风量
-            oa_per_person = _fixed_val(fa_param, 30.0) / 3600.0
+            oa_per_person = _fixed_val(fa_param) / 3600.0
             oa_sched_name = "Always_On"  # 始终保持设计新风量
         parts.append(_outdoor_air_spec(zn, oa_per_person, oa_sched_name))
 
@@ -231,18 +311,15 @@ def generate_idf(
 # 固定值提取器
 # ---------------------------------------------------------------------------
 
-def _fixed_val(param: dict[str, Any] | float | int | None, default: float) -> float:
+def _fixed_val(param: dict[str, Any] | float | int) -> float:
     """从 ParamConfig 中提取固定值。
 
-    - param 为 None → 返回默认值
     - param 为数字 → 直接返回
     - param 为字典 → 返回 param["fixed_value"]
     """
-    if param is None:
-        return default
     if isinstance(param, (int, float)):
         return float(param)
-    return param.get("fixed_value", default)
+    return param["fixed_value"]
 
 
 # ---------------------------------------------------------------------------
@@ -270,21 +347,21 @@ def _global_sim_control() -> str:
     )
 
 
-def _global_building(btype: str) -> str:
+def _global_building() -> str:
     """生成 Building 对象。
 
     地形设为 City（城市），太阳分布采用 FullInteriorAndExterior（完整内外计算）。
     """
     return (
-        f"Building,\n"
-        f"  {btype}_Building,  !- Name\n"
-        f"  0.0,  !- North Axis (deg)\n"
-        f"  City, !- Terrain\n"
-        f"  0.04, !- Loads Convergence Tolerance\n"
-        f"  0.4,  !- Temperature Convergence Tolerance\n"
-        f"  FullInteriorAndExterior, !- Solar Distribution\n"
-        f"  25,   !- Maximum Number of Warmup Days\n"
-        f"  6;    !- Minimum Number of Warmup Days"
+        "Building,\n"
+        "  HVAC_Simulation_Building,  !- Name\n"
+        "  0.0,  !- North Axis (deg)\n"
+        "  City, !- Terrain\n"
+        "  0.04, !- Loads Convergence Tolerance\n"
+        "  0.4,  !- Temperature Convergence Tolerance\n"
+        "  FullInteriorAndExterior, !- Solar Distribution\n"
+        "  25,   !- Maximum Number of Warmup Days\n"
+        "  6;    !- Minimum Number of Warmup Days"
     )
 
 
@@ -321,57 +398,32 @@ def _global_run_period() -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# 各气候区月均地表温度 [°C]（0.5m 深度），用于 Site:GroundTemperature:BuildingSurface
-#
-# 数据来源：
-#   中国标准气象数据集 (CSWD - Chinese Standard Weather Data)
-#   由中国气象局与美国能源部合作开发，收录于 EnergyPlus 官方气象文件库。
-#   每个气候区选取代表城市的 EPW 文件，文件头部的 GROUND TEMPERATURES 字段
-#   包含 Kusuda 模型计算的 0.5m/2m/4m 三层深度月均地温值。
-#   本表取 0.5m 深度数据（最接近建筑地面传热计算需求）。
-#
-# 代表城市及对应 EPW 文件：
-#   严寒区 → 哈尔滨 (CHN_Heilongjiang.Harbin.509530_CSWD.epw)
-#   寒冷区 → 北京   (CHN_Beijing.Beijing.545110_CSWD.epw)
-#   夏热冬冷 → 上海  (CHN_Shanghai.Shanghai.583670_CSWD.epw)
-#   夏热冬暖 → 广州  (CHN_Guangdong.Guangzhou.592870_CSWD.epw)
-#   温和区 → 昆明   (CHN_Yunnan.Kunming.567780_CSWD.epw)
-#
-# 气候分区依据：
-#   GB 50176-2016《民用建筑热工设计规范》将中国划分为 5 个建筑热工设计分区，
-#   各省/自治区/直辖市到气候区的映射见前端 regions.ts 中的 PROVINCE_CLIMATE_MAP。
-#   同一气候区内的城市使用相同的代表城市地温数据和气象文件，
-#   这在工程实践中的精度已满足方案阶段负荷估算需求。
-#
-# 月份顺序：1月, 2月, 3月, ..., 12月
-# ---------------------------------------------------------------------------
-CLIMATE_GROUND_TEMPS: dict[str, list[float]] = {
-    #                     1月     2月     3月     4月     5月     6月     7月     8月     9月    10月    11月    12月
-    "severe_cold":      [-13.1, -14.7, -11.8,  -7.1,   5.1,  14.5,  20.9,  22.8,  19.5,  12.2,   2.4,  -6.6],  # 严寒区 (哈尔滨)
-    "cold":             [  0.1,  -1.1,   1.1,   4.5,  13.4,  20.2,  24.9,  26.3,  23.9,  18.5,  11.4,   4.8],  # 寒冷区 (北京)
-    "hot_summer_cold_winter": [6.3, 8.2, 12.0, 15.6, 22.5, 26.0, 27.0, 25.2, 21.0, 15.8, 10.6,  7.2],  # 夏热冬冷 (上海)
-    "hot_summer_warm_winter": [18.4, 16.1, 15.4, 16.0, 19.1, 22.6, 25.9, 28.2, 28.9, 27.8, 25.1, 21.7],  # 夏热冬暖 (广州)
-    "mild":             [ 10.2,  11.2,  13.1,  14.9,  18.4,  20.2,  20.7,  19.8,  17.7,  15.0,  12.4,  10.7],  # 温和区 (昆明)
-}
-
-
-def _global_location(cz: str) -> str:
+def _global_location(location: list[str]) -> str:
     """生成 Site:Location 和 Site:GroundTemperature:BuildingSurface 对象。
 
-    根据气候区选择代表城市的经纬度、时区、海拔，
-    同时提供 12 个月的地表温度用于地板传热计算。
+    根据 location [省份, 城市] 查找对应的 EPW 气象文件，
+    从中提取经纬度、时区、海拔以及 12 个月的 0.5m 深度地表温度。
     """
-    loc = CLIMATE_ZONE_LOCATIONS.get(cz, CLIMATE_ZONE_LOCATIONS["hot_summer_cold_winter"])
-    temps = CLIMATE_GROUND_TEMPS.get(cz, CLIMATE_GROUND_TEMPS["hot_summer_cold_winter"])
+    _, loc_data = find_epw_for_location(location)
+    if not loc_data:
+        raise ValueError(
+            f"找不到 location={location} 对应的 EPW 气象文件，"
+            "请确认 data/weather/ 目录下包含该地区的天气数据。"
+        )
+    name = loc_data["name"]
+    lat = loc_data["lat"]
+    lon = loc_data["lon"]
+    tz = loc_data["tz"]
+    elev = loc_data["elev"]
+    temps = loc_data.get("ground_temps", [15.0] * 12)
     temp_str = ", ".join(str(t) for t in temps)
     return (
         f"Site:Location,\n"
-        f"  {loc['name']},  !- Name\n"
-        f"  {loc['lat']},   !- Latitude\n"
-        f"  {loc['lon']},   !- Longitude\n"
-        f"  {loc['tz']},    !- Time Zone\n"
-        f"  {loc['elev']};  !- Elevation\n\n"
+        f"  {name},  !- Name\n"
+        f"  {lat},   !- Latitude\n"
+        f"  {lon},   !- Longitude\n"
+        f"  {tz},    !- Time Zone\n"
+        f"  {elev};  !- Elevation\n\n"
         f"Site:GroundTemperature:BuildingSurface, {temp_str};"
     )
 
@@ -441,9 +493,9 @@ def _materials_constructions(zn: str, zone: dict[str, Any]) -> str:
     采用双层构造：保温层(NoMass) + 150mm混凝土质量层(Material)。
     这样既能精确匹配目标U值，又提供足够的热惯性避免仿真不稳定。
     """
-    wall_u = zone.get("wall_u_value", 1.0)
-    roof_u = zone.get("roof_u_value", 0.8)
-    win_u = zone.get("window_u_value", 3.0)
+    wall_u = zone["wall_u_value"]
+    roof_u = zone["roof_u_value"]
+    win_u = zone["window_u_value"]
 
     # 质量层参数: 150mm 混凝土 (k=1.0 W/m·K, ρ=2000 kg/m³, cp=900 J/kg·K)
     MASS_THICK = 0.15   # 厚度 [m]
@@ -470,8 +522,11 @@ def _materials_constructions(zn: str, zone: dict[str, Any]) -> str:
         f"WindowMaterial:SimpleGlazingSystem, {zn}_WinMat, {win_u}, 0.40;",
         # 构造定义：外层保温 + 内层混凝土
         f"Construction, {zn}_WallC, {zn}_WallIns, {zn}_WallMass;",
+        f"Construction, {zn}_IntWallC, {zn}_WallMass;",  # 内墙：仅混凝土层（无保温）
         f"Construction, {zn}_RoofC, {zn}_RoofIns, {zn}_RoofMass;",
+        f"Construction, {zn}_IntRoofC, {zn}_RoofMass;",  # 层间楼板
         f"Construction, {zn}_FloorC, {zn}_FloorMass, {zn}_FloorIns;",
+        f"Construction, {zn}_IntFloorC, {zn}_FloorMass;",  # 层间楼板
         f"Construction, {zn}_WinC, {zn}_WinMat;",
     ]
     return "\n\n".join(lines)
@@ -480,11 +535,14 @@ def _materials_constructions(zn: str, zone: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # 几何体生成（Shoebox 模型）
 # 每个热区被建模为一个简单的长方体（鞋盒模型），
-# 包含：1个地板 + 1个屋顶 + 4面外墙 + 方向窗户
+# 包含：1个地板 + 1个屋顶 + 4面墙 + 方向窗户
+# 根据 zone_position 和 wall_config 设置边界条件
 # ---------------------------------------------------------------------------
 
 def _zone_geometry(zn: str, w: float, d: float, h: float,
-                   wwr: float, x0: float) -> str:
+                   wwr: float, x0: float,
+                   zone_position: str = "single",
+                   wall_config: dict[str, Any] | None = None) -> str:
     """生成区域的所有几何表面（地板、屋顶、4面墙和窗户）。
 
     参数:
@@ -494,38 +552,74 @@ def _zone_geometry(zn: str, w: float, d: float, h: float,
         h: 高度 [m]
         wwr: 窗墙比 [0~1]
         x0: X轴偏移量 [m]
+        zone_position: "single"|"top"|"middle"|"bottom"
+            - single: 独立层 → 地板Ground, 屋顶Outdoors
+            - top: 顶层 → 地板Adiabatic(层间楼板), 屋顶Outdoors
+            - bottom: 底层 → 地板Ground, 屋顶Adiabatic(层间楼板)
+            - middle: 中间层 → 地板Adiabatic, 屋顶Adiabatic
+        wall_config: 各方向墙体是否为外墙
+            {south_exterior, north_exterior, east_exterior, west_exterior}
     """
+    if wall_config is None:
+        wall_config = {}
     parts: list[str] = []
 
-    # Floor
+    # Floor boundary condition based on zone_position
+    if zone_position in ("top", "middle"):
+        floor_bc, floor_exposed = "Adiabatic", False
+        floor_constr = f"{zn}_IntFloorC"
+    else:  # single, bottom
+        floor_bc, floor_exposed = "Ground", False
+        floor_constr = f"{zn}_FloorC"
+
     parts.append(_surface(
-        f"{zn}_Floor", "Floor", f"{zn}_FloorC", zn,
-        "Ground", False,
+        f"{zn}_Floor", "Floor", floor_constr, zn,
+        floor_bc, floor_exposed,
         [(x0 + w, d, 0), (x0 + w, 0, 0), (x0, 0, 0), (x0, d, 0)],
     ))
-    # Roof
+
+    # Roof boundary condition based on zone_position
+    if zone_position in ("bottom", "middle"):
+        roof_bc, roof_exposed = "Adiabatic", False
+        roof_constr = f"{zn}_IntRoofC"
+    else:  # single, top
+        roof_bc, roof_exposed = "Outdoors", True
+        roof_constr = f"{zn}_RoofC"
+
     parts.append(_surface(
-        f"{zn}_Roof", "Roof", f"{zn}_RoofC", zn,
-        "Outdoors", True,
+        f"{zn}_Roof", "Roof", roof_constr, zn,
+        roof_bc, roof_exposed,
         [(x0, d, h), (x0, 0, h), (x0 + w, 0, h), (x0 + w, d, h)],
     ))
 
-    # Walls  (name, width_for_windows, 4 vertices)
+    # Walls  (name, width_for_windows, 4 vertices, exterior_key)
     wall_defs = [
         ("South", w,
-         [(x0, 0, h), (x0, 0, 0), (x0 + w, 0, 0), (x0 + w, 0, h)]),
+         [(x0, 0, h), (x0, 0, 0), (x0 + w, 0, 0), (x0 + w, 0, h)],
+         "south_exterior"),
         ("North", w,
-         [(x0 + w, d, h), (x0 + w, d, 0), (x0, d, 0), (x0, d, h)]),
+         [(x0 + w, d, h), (x0 + w, d, 0), (x0, d, 0), (x0, d, h)],
+         "north_exterior"),
         ("East", d,
-         [(x0 + w, 0, h), (x0 + w, 0, 0), (x0 + w, d, 0), (x0 + w, d, h)]),
+         [(x0 + w, 0, h), (x0 + w, 0, 0), (x0 + w, d, 0), (x0 + w, d, h)],
+         "east_exterior"),
         ("West", d,
-         [(x0, d, h), (x0, d, 0), (x0, 0, 0), (x0, 0, h)]),
+         [(x0, d, h), (x0, d, 0), (x0, 0, 0), (x0, 0, h)],
+         "west_exterior"),
     ]
 
-    for orient, ww, verts in wall_defs:
+    for orient, ww, verts, ext_key in wall_defs:
         wn = f"{zn}_Wall_{orient}"
-        parts.append(_surface(wn, "Wall", f"{zn}_WallC", zn, "Outdoors", True, verts))
-        if wwr > 0.01:
+        is_exterior = wall_config.get(ext_key, True)
+        if is_exterior:
+            bc, exposed = "Outdoors", True
+            constr = f"{zn}_WallC"
+        else:
+            bc, exposed = "Adiabatic", False
+            constr = f"{zn}_IntWallC"
+        parts.append(_surface(wn, "Wall", constr, zn, bc, exposed, verts))
+        # Only add windows to exterior walls
+        if is_exterior and wwr > 0.01:
             wv = _window_verts(orient, ww, h, wwr, w, d, x0)
             if wv:
                 parts.append(_fenestration(f"{zn}_Win_{orient}", f"{zn}_WinC", wn, wv))
@@ -654,7 +748,7 @@ def _param_config_schedule(name: str, param: dict[str, Any] | float | int | None
     if isinstance(param, (int, float)):
         return f"Schedule:Constant, {name}, Any Number, {param};"
 
-    fv = param.get("fixed_value", 0.0)  # 固定值（mode=fixed 时使用）
+    fv = param["fixed_value"]  # 固定值（mode=fixed 时使用）
     # 固定模式或无 schedule 条目：返回常数
     if param.get("mode", "fixed") == "fixed" or not param.get("schedules"):
         return f"Schedule:Constant, {name}, Any Number, {fv};"
@@ -726,14 +820,14 @@ def _offset_schedule(name: str, param: dict[str, Any] | float | int | None,
     if isinstance(param, (int, float)):
         return f"Schedule:Constant, {name}, Temperature, {float(param) + offset};"
 
-    fv = param.get("fixed_value", 0.0) + offset
+    fv = param["fixed_value"] + offset
     if param.get("mode", "fixed") == "fixed" or not param.get("schedules"):
         return f"Schedule:Constant, {name}, Temperature, {fv};"
 
     shifted = dict(param)
     shifted["fixed_value"] = fv
     shifted["schedules"] = [
-        {**s, "value": s.get("value", param.get("fixed_value", 0.0)) + offset}
+        {**s, "value": s.get("value", param["fixed_value"]) + offset}
         for s in param.get("schedules", [])
     ]
     return _param_config_schedule(name, shifted, off_value=off_value)
@@ -852,6 +946,7 @@ def _ideal_loads(zn: str) -> str:
     - 显热比: 0.7（固定值）
     - 新风规格: 引用同区域的 DSOA 对象
     - 热回收效率: 显热0.70 / 全热0.65
+    - DCV: OccupancySchedule（按实际人员 schedule 计算新风量）
     """
     return (
         f"ZoneHVAC:IdealLoadsAirSystem,\n"
@@ -871,7 +966,7 @@ def _ideal_loads(zn: str) -> str:
         f"  None,\n"                         # Humidification Control
         f"  {zn}_DSOA,\n"                    # Design Spec OA
         f"  ,\n"                             # OA inlet node
-        f"  None,\n"                         # DCV type
+        f"  OccupancySchedule,\n"            # DCV type: 按实际人数计算新风量
         f"  NoEconomizer,\n"
         f"  None,\n"                         # Heat Recovery
         f"  0.70, 0.65;"

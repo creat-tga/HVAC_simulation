@@ -13,17 +13,9 @@ from typing import Any
 from app.config import settings
 from app.simulation.energyplus.idf_generator import generate_idf
 from app.simulation.energyplus.parser import parse_load_results
+from app.simulation.energyplus.weather_utils import find_epw_for_location
 
 log = logging.getLogger(__name__)
-
-# Climate zone -> standard EPW file basenames (CSWD format)
-WEATHER_FILES: dict[str, str] = {
-    "severe_cold": "CHN_Heilongjiang.Harbin.509530_CSWD.epw",
-    "cold": "CHN_Beijing.Beijing.545110_CSWD.epw",
-    "hot_summer_cold_winter": "CHN_Shanghai.Shanghai.583670_CSWD.epw",
-    "hot_summer_warm_winter": "CHN_Guangdong.Guangzhou.592870_CSWD.epw",
-    "mild": "CHN_Yunnan.Kunming.567780_CSWD.epw",
-}
 
 
 class EnergyPlusRunner:
@@ -51,20 +43,9 @@ class EnergyPlusRunner:
                 return True
         return False
 
-    def _find_weather(self, climate_zone: str) -> Path | None:
-        basename = WEATHER_FILES.get(climate_zone)
-        for d in self._weather_dirs:
-            if not d.is_dir():
-                continue
-            if basename:
-                p = d / basename
-                if p.is_file():
-                    return p
-            # Fallback: first .epw containing the climate zone keyword
-            for f in d.glob("*.epw"):
-                if climate_zone.replace("_", "") in f.stem.lower().replace("_", ""):
-                    return f
-        return None
+    def _find_weather(self, location: list[str]) -> Path | None:
+        epw_path, _ = find_epw_for_location(location, self._weather_dirs)
+        return epw_path
 
     def _ep_exe(self) -> str:
         assert self.ep_dir is not None
@@ -80,9 +61,8 @@ class EnergyPlusRunner:
 
     async def run_load_simulation(
         self,
-        zones: list[dict[str, Any]],
-        climate_zone: str,
-        building_type: str = "office",
+        zones: dict[str, dict[str, Any]],
+        location: list[str],
     ) -> tuple[list[float], list[float]]:
         """Generate IDF -> run EnergyPlus -> return hourly loads [kW].
 
@@ -91,23 +71,21 @@ class EnergyPlusRunner:
         if not self.is_available():
             raise RuntimeError("EnergyPlus is not installed or not configured")
 
-        weather = self._find_weather(climate_zone)
+        weather = self._find_weather(location)
         if weather is None:
             raise RuntimeError(
-                f"No EPW weather file found for climate zone '{climate_zone}'. "
+                f"No EPW weather file found for location {location}. "
                 f"Searched: {[str(d) for d in self._weather_dirs]}"
             )
 
-        idf_content = generate_idf(zones, climate_zone, building_type)
+        idf_content = generate_idf(zones, location)
         work_dir = Path(tempfile.mkdtemp(prefix="hvac_ep_"))
 
         try:
             idf_path = work_dir / "in.idf"
             idf_path.write_text(idf_content, encoding="utf-8")
-            # DEBUG: export IDF for inspection
-            Path(r"C:\myProject\debug_export.idf").write_text(idf_content, encoding="utf-8")
             log.info("EnergyPlus IDF written to %s (%d bytes)", idf_path, len(idf_content))
-
+            Path(r"D:\00-project\debug_export.idf").write_text(idf_content, encoding="utf-8")
             def _run_ep() -> subprocess.CompletedProcess[str]:
                 return subprocess.run(
                     [self._ep_exe(), "-w", str(weather), "-d", str(work_dir), "-r", str(idf_path)],

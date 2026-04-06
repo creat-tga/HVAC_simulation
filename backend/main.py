@@ -1,12 +1,14 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import engine, Base, async_session
 from app.routers import projects, buildings, simulation, reports, auth
 from app.services.auth_service import seed_admin
+from app.simulation.energyplus.idf_generator import ZoneValidationError
 
 
 @asynccontextmanager
@@ -46,3 +48,18 @@ app.include_router(reports.router, prefix="/api")
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "app": settings.app_name}
+
+
+@app.exception_handler(ZoneValidationError)
+async def zone_validation_handler(request: Request, exc: ZoneValidationError):
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(RuntimeError)
+async def runtime_error_handler(request: Request, exc: RuntimeError):
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
