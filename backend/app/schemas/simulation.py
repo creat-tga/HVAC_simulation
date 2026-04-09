@@ -45,23 +45,40 @@ class SimulationResponse(BaseModel):
     building_id: uuid.UUID
     simulation_type: str
     status: str
-    total_cooling_load: float | None
-    total_heating_load: float | None
-    total_energy: float | None
-    total_cost: float | None
-    total_carbon: float | None
-    peak_cooling_load: float | None
-    peak_heating_load: float | None
+    task_id: str | None = None
+    progress: int = 0
+    error_message: str | None = None
+    total_cooling_load: float | None = None
+    total_heating_load: float | None = None
+    total_energy: float | None = None
+    total_cost: float | None = None
+    total_carbon: float | None = None
+    peak_cooling_load: float | None = None
+    peak_heating_load: float | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
 
 class SimulationDetailResponse(SimulationResponse):
-    hourly_cooling_load: list[float] | None
-    hourly_heating_load: list[float] | None
-    hourly_energy: list[float] | None
-    result_data: dict[str, Any] | None
+    hourly_cooling_load: list[float] | None = None
+    hourly_heating_load: list[float] | None = None
+    hourly_energy: list[float] | None = None
+    result_data: dict[str, Any] | None = None
+
+
+class SimulationStatusResponse(BaseModel):
+    id: uuid.UUID
+    status: str
+    task_id: str | None = None
+    progress: int = 0
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
 
 
 # Report schemas

@@ -1,9 +1,11 @@
 import logging
 import uuid
 
+from celery.result import AsyncResult
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.celery_app import celery_app
 from app.models.building import Building
 from app.models.project import Project
 from app.models.simulation import HVACSystem, SimulationResult
@@ -153,111 +155,71 @@ async def get_simulation_result(
 async def create_simulation(
     db: AsyncSession, building_id: uuid.UUID, data: SimulationCreate
 ) -> SimulationResult:
-    """Create and run a simulation: generate loads then compute system energy."""
-    # Fetch building info
+    """Create a pending SimulationResult and dispatch a Celery background task."""
     building = await db.get(Building, building_id)
     if not building:
         raise ValueError("建筑不存在")
 
-    zones = building.zones
-    location = await _get_building_location(db, building)
+    if not building.zones:
+        raise ValueError("建筑未配置热区，无法运行仿真")
 
-    # Generate 8760 hourly loads
-    hourly_cooling, hourly_heating = await _generate_loads(location, zones)
+    if not _ep_runner.is_available():
+        raise RuntimeError("EnergyPlus is not installed or not configured")
 
-    total_cooling = round(sum(hourly_cooling), 2)
-    total_heating = round(sum(hourly_heating), 2)
-    peak_cooling = round(max(hourly_cooling), 2) if hourly_cooling else 0.0
-    peak_heating = round(max(hourly_heating), 2) if hourly_heating else 0.0
-
-    # Get HVAC systems for this building
-    systems_result = await db.execute(
-        select(HVACSystem).where(HVACSystem.building_id == building_id)
-    )
-    hvac_systems = list(systems_result.scalars().all())
-
-    # Default electricity price
-    electricity_price = 0.85  # yuan/kWh
-
-    hourly_energy = [0.0] * 8760
-    total_energy = 0.0
-    total_cost = 0.0
-    total_carbon = 0.0
-    monthly_cost = [0.0] * 12
-    monthly_carbon = [0.0] * 12
-    monthly_energy = [0.0] * 12
-
-    if hvac_systems:
-        for hvac in hvac_systems:
-            model_cls = SYSTEM_MODEL_MAP.get(hvac.system_type, ChillerSystem)
-            spec = SystemSpec(
-                name=hvac.name,
-                capacity=hvac.capacity or peak_cooling,
-                cop=hvac.cop or 5.0,
-                parameters=hvac.parameters or {},
-            )
-            model = model_cls(spec)
-            sim_input = SimulationInput(
-                hourly_cooling_load=hourly_cooling,
-                hourly_heating_load=hourly_heating,
-                electricity_price=electricity_price,
-            )
-            output = model.simulate(sim_input)
-
-            # Aggregate results from all systems
-            for i in range(8760):
-                hourly_energy[i] += output.hourly_energy[i]
-            total_energy += output.total_energy
-            total_cost += output.total_cost
-            total_carbon += output.total_carbon
-            for m in range(12):
-                monthly_cost[m] += output.monthly_cost[m]
-                monthly_carbon[m] += output.monthly_carbon[m]
-                monthly_energy[m] += output.monthly_energy[m]
-    else:
-        # No systems configured, estimate with default COP
-        default_cop = 5.0
-        for i in range(8760):
-            e = hourly_cooling[i] / default_cop if hourly_cooling[i] > 0 else 0.0
-            hourly_energy[i] = round(e, 2)
-        total_energy = round(sum(hourly_energy), 2)
-        total_cost = round(total_energy * electricity_price, 2)
-        total_carbon = round(total_energy * 0.581, 2)
-
-        days_per_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-        offset = 0
-        for m, days in enumerate(days_per_month):
-            hours = days * 24
-            monthly_energy[m] = round(sum(hourly_energy[offset : offset + hours]), 2)
-            monthly_cost[m] = round(monthly_energy[m] * electricity_price, 2)
-            monthly_carbon[m] = round(monthly_energy[m] * 0.581, 2)
-            offset += hours
-
-    hourly_energy = [round(e, 2) for e in hourly_energy]
-
+    # Create pending record
     sim_result = SimulationResult(
         building_id=building_id,
         simulation_type=data.simulation_type,
-        status="completed",
-        hourly_cooling_load=hourly_cooling,
-        hourly_heating_load=hourly_heating,
-        hourly_energy=hourly_energy,
-        total_cooling_load=total_cooling,
-        total_heating_load=total_heating,
-        total_energy=round(total_energy, 2),
-        total_cost=round(total_cost, 2),
-        total_carbon=round(total_carbon, 2),
-        peak_cooling_load=peak_cooling,
-        peak_heating_load=peak_heating,
-        result_data={
-            "electricity_cost": round(total_cost, 2),
-            "monthly_cost": [round(c, 2) for c in monthly_cost],
-            "monthly_carbon": [round(c, 2) for c in monthly_carbon],
-            "monthly_energy": [round(e, 2) for e in monthly_energy],
-            "carbon_factor": 0.581,
-        },
+        status="pending",
+        progress=0,
     )
     db.add(sim_result)
     await db.commit()
     await db.refresh(sim_result)
+
+    # Dispatch Celery task
+    from app.tasks.simulation_task import run_simulation_task
+
+    task = run_simulation_task.delay(str(sim_result.id), str(building_id))
+
+    # Store the Celery task ID
+    sim_result.task_id = task.id
+    await db.commit()
+    await db.refresh(sim_result)
+
+    log.info(
+        "Simulation %s dispatched as Celery task %s", sim_result.id, task.id
+    )
     return sim_result
+
+
+async def get_simulation_status(
+    db: AsyncSession, result_id: uuid.UUID
+) -> SimulationResult | None:
+    """Get current simulation status (lightweight, for polling)."""
+    return await db.get(SimulationResult, result_id)
+
+
+async def cancel_simulation(
+    db: AsyncSession, result_id: uuid.UUID
+) -> SimulationResult | None:
+    """Cancel a running or pending simulation."""
+    result = await db.get(SimulationResult, result_id)
+    if not result:
+        return None
+
+    if result.status in ("completed", "failed", "cancelled"):
+        return result  # Already terminal
+
+    # Revoke Celery task
+    if result.task_id:
+        celery_app.control.revoke(result.task_id, terminate=True, signal="SIGTERM")
+        log.info("Revoked Celery task %s for simulation %s", result.task_id, result_id)
+
+    result.status = "cancelled"
+    result.error_message = "用户取消"
+    from datetime import datetime, timezone
+    result.completed_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(result)
+    return result

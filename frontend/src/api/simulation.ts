@@ -6,6 +6,7 @@ import type {
   SimulationResult,
   SimulationDetail,
   SimulationCreate,
+  SimulationStatus,
   LoadPreview,
 } from '@/types/simulation'
 
@@ -42,4 +43,12 @@ export function runSimulation(buildingId: string, data: SimulationCreate) {
 
 export function getSimulationDetail(buildingId: string, resultId: string) {
   return api.get<SimulationDetail>(`/buildings/${buildingId}/simulations/${resultId}`)
+}
+
+export function getSimulationStatus(buildingId: string, resultId: string) {
+  return api.get<SimulationStatus>(`/buildings/${buildingId}/simulations/${resultId}/status`)
+}
+
+export function cancelSimulation(buildingId: string, resultId: string) {
+  return api.post<SimulationStatus>(`/buildings/${buildingId}/simulations/${resultId}/cancel`)
 }

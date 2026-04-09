@@ -334,7 +334,18 @@ export default {
     statusLabels: {
       completed: '完成',
       failed: '失败',
-      pending: '进行中',
+      pending: '等待中',
+      running: '运行中',
+      cancelled: '已取消',
+    },
+    progress: {
+      label: '进度',
+      realtime: '实时更新',
+      connecting: '正在连接...',
+      cancel: '取消任务',
+      cancelled: '仿真任务已取消',
+      cancelFailed: '取消失败',
+      completed: '仿真已完成',
     },
     steps: {
       loadSimulation: '负荷计算',

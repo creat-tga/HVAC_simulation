@@ -11,6 +11,7 @@ from app.schemas.simulation import (
     SimulationCreate,
     SimulationResponse,
     SimulationDetailResponse,
+    SimulationStatusResponse,
     LoadPreviewResponse,
 )
 from app.services import simulation_service
@@ -89,7 +90,7 @@ async def run_simulation(
     data: SimulationCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    """启动仿真任务"""
+    """提交仿真任务（后台运行，立即返回任务ID）"""
     return await simulation_service.create_simulation(db, building_id, data)
 
 
@@ -101,6 +102,36 @@ async def get_simulation_detail(
 ):
     """获取仿真结果详情"""
     result = await simulation_service.get_simulation_result(db, result_id)
+    if not result or result.building_id != building_id:
+        raise HTTPException(status_code=404, detail="仿真结果不存在")
+    return result
+
+
+@router.get(
+    "/simulations/{result_id}/status", response_model=SimulationStatusResponse
+)
+async def get_simulation_status(
+    building_id: uuid.UUID,
+    result_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """查询仿真任务状态与进度"""
+    result = await simulation_service.get_simulation_status(db, result_id)
+    if not result or result.building_id != building_id:
+        raise HTTPException(status_code=404, detail="仿真结果不存在")
+    return result
+
+
+@router.post(
+    "/simulations/{result_id}/cancel", response_model=SimulationStatusResponse
+)
+async def cancel_simulation(
+    building_id: uuid.UUID,
+    result_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """取消正在运行或等待中的仿真任务"""
+    result = await simulation_service.cancel_simulation(db, result_id)
     if not result or result.building_id != building_id:
         raise HTTPException(status_code=404, detail="仿真结果不存在")
     return result

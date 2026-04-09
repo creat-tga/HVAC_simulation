@@ -212,27 +212,72 @@ function isScheduleInConflict(schedules: DaySchedule[], idx: number): boolean {
 
 const ALL_PARAM_METAS = [...PARAM_METAS, ...SETPOINT_METAS]
 
-// ----- Global conflict check across all zones and params -----
-const hasAnyConflict = computed(() => {
+// ----- Global conflict check (debounced for performance) -----
+const hasAnyConflict = ref(false)
+let _conflictTimer: ReturnType<typeof setTimeout> | null = null
+
+function _checkConflicts() {
   for (const zone of editZones.value) {
     for (const pm of ALL_PARAM_METAS) {
       const param = getParam(zone, pm.key)
-      if (param.mode === 'scheduled' && getConflicts(param.schedules).length > 0) return true
+      if (param.mode === 'scheduled' && getConflicts(param.schedules).length > 0) {
+        hasAnyConflict.value = true
+        return
+      }
     }
   }
-  return false
-})
+  hasAnyConflict.value = false
+}
 
-// ----- Unsaved changes detection -----
+watch(editZones, () => {
+  if (_conflictTimer) clearTimeout(_conflictTimer)
+  _conflictTimer = setTimeout(_checkConflicts, 500)
+}, { deep: true })
+
+// ----- Unsaved changes detection (debounced) -----
 const savedSnapshot = ref('')
 
 function getStateSnapshot(): string {
   return JSON.stringify({ name: editName.value, zones: editZones.value })
 }
 
-const isDirty = computed(() => {
-  if (!savedSnapshot.value) return false
-  return getStateSnapshot() !== savedSnapshot.value
+const isDirty = ref(false)
+let _dirtyTimer: ReturnType<typeof setTimeout> | null = null
+
+function _checkDirty() {
+  if (!savedSnapshot.value) { isDirty.value = false; return }
+  isDirty.value = getStateSnapshot() !== savedSnapshot.value
+}
+
+watch([editName, editZones], () => {
+  if (_dirtyTimer) clearTimeout(_dirtyTimer)
+  _dirtyTimer = setTimeout(_checkDirty, 600)
+}, { deep: true })
+
+// ----- Zone table pagination -----
+const pageSize = ref(30)
+const currentPage = ref(1)
+
+const totalZones = computed(() => editZones.value.length)
+
+const pagedZones = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return editZones.value.slice(start, start + pageSize.value)
+})
+
+function handlePageChange(page: number) {
+  currentPage.value = page
+}
+
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+}
+
+// Ensure currentPage stays valid when zones are deleted
+watch(totalZones, (total) => {
+  const maxPage = Math.max(1, Math.ceil(total / pageSize.value))
+  if (currentPage.value > maxPage) currentPage.value = maxPage
 })
 
 // ----- Zone management -----
@@ -261,6 +306,8 @@ function addZone() {
   nextTick(() => {
     selectedZoneIdx.value = editZones.value.length - 1
     activePresetKey.value = ''
+    // Jump to last page to show the new zone
+    currentPage.value = Math.ceil(editZones.value.length / pageSize.value)
   })
 }
 
@@ -268,7 +315,10 @@ function copyZone(zone: BuildingZone) {
   const copy: BuildingZone = JSON.parse(JSON.stringify(zone))
   copy.name = copy.name ? `${copy.name} (${t('building.zone.copy')})` : ''
   editZones.value.push(copy)
-  nextTick(() => { selectedZoneIdx.value = editZones.value.length - 1 })
+  nextTick(() => {
+    selectedZoneIdx.value = editZones.value.length - 1
+    currentPage.value = Math.ceil(editZones.value.length / pageSize.value)
+  })
   ElMessage.success(t('building.zone.copySuccess'))
 }
 
@@ -309,6 +359,8 @@ function batchCopy() {
     return copy
   })
   editZones.value.push(...copies)
+  // Jump to last page to show copied zones
+  currentPage.value = Math.ceil(editZones.value.length / pageSize.value)
   ElMessage.success(t('building.zone.batchCopySuccess', { count: copies.length }))
 }
 
@@ -321,6 +373,8 @@ function confirmBatchAdd() {
     editZones.value.push(createDefaultZone(name))
   }
   batchAddVisible.value = false
+  // Jump to last page to show newly added zones
+  currentPage.value = Math.ceil(editZones.value.length / pageSize.value)
   ElMessage.success(t('building.zone.batchAddSuccess', { count }))
 }
 
@@ -538,13 +592,14 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
         </div>
       </template>
 
-      <el-table :data="editZones" size="small" stripe highlight-current-row
-        :current-row-key="selectedZoneIdx"
+      <el-table :data="pagedZones" size="small" stripe highlight-current-row
         @selection-change="handleSelectionChange"
         @row-click="handleRowClick"
-        :row-class-name="({rowIndex}: {row: BuildingZone, rowIndex: number}) => rowIndex === selectedZoneIdx ? 'current-zone-row' : ''">
+        :row-class-name="({row}: {row: BuildingZone, rowIndex: number}) => editZones.indexOf(row) === selectedZoneIdx ? 'current-zone-row' : ''">
         <el-table-column type="selection" width="40" />
-        <el-table-column label="#" width="45" type="index" :index="(i: number) => i + 1" />
+        <el-table-column label="#" width="55">
+          <template #default="{ $index }">{{ (currentPage - 1) * pageSize + $index + 1 }}</template>
+        </el-table-column>
         <el-table-column :label="t('building.zone.name')" min-width="120">
           <template #default="{ row }">
             <el-input v-model="row.name" size="small" :placeholder="t('building.zone.pleaseInputName')" />
@@ -597,6 +652,17 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
           </template>
         </el-table-column>
       </el-table>
+      <el-pagination
+        v-if="totalZones > 30"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[20, 30, 50, 100]"
+        :total="totalZones"
+        layout="total, sizes, prev, pager, next, jumper"
+        style="margin-top: 12px; justify-content: flex-end"
+        @size-change="handleSizeChange"
+        @current-change="handlePageChange"
+      />
     </el-card>
 
     <!-- Batch add dialog -->

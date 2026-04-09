@@ -334,7 +334,18 @@ export default {
     statusLabels: {
       completed: 'Completed',
       failed: 'Failed',
-      pending: 'Running',
+      pending: 'Pending',
+      running: 'Running',
+      cancelled: 'Cancelled',
+    },
+    progress: {
+      label: 'Progress',
+      realtime: 'Live',
+      connecting: 'Connecting...',
+      cancel: 'Cancel',
+      cancelled: 'Simulation cancelled',
+      cancelFailed: 'Cancel failed',
+      completed: 'Simulation completed',
     },
     steps: {
       loadSimulation: 'Load Calculation',

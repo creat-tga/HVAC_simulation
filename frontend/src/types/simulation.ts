@@ -30,6 +30,9 @@ export interface SimulationResult {
   building_id: string
   simulation_type: string
   status: string
+  task_id: string | null
+  progress: number
+  error_message: string | null
   total_cooling_load: number | null
   total_heating_load: number | null
   total_energy: number | null
@@ -37,6 +40,8 @@ export interface SimulationResult {
   total_carbon: number | null
   peak_cooling_load: number | null
   peak_heating_load: number | null
+  started_at: string | null
+  completed_at: string | null
   created_at: string
 }
 
@@ -49,6 +54,23 @@ export interface SimulationDetail extends SimulationResult {
 
 export interface SimulationCreate {
   simulation_type: string
+}
+
+export interface SimulationStatus {
+  id: string
+  status: string
+  task_id: string | null
+  progress: number
+  error_message: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+export interface SimulationProgressEvent {
+  id: string
+  progress: number
+  status: string
+  message: string
 }
 
 export interface LoadPreview {

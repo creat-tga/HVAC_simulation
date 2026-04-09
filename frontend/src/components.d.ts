@@ -49,7 +49,9 @@ declare module 'vue' {
     ElMenuItem: typeof import('element-plus/es')['ElMenuItem']
     ElMenuItemGroup: typeof import('element-plus/es')['ElMenuItemGroup']
     ElOption: typeof import('element-plus/es')['ElOption']
+    ElPagination: typeof import('element-plus/es')['ElPagination']
     ElPopover: typeof import('element-plus/es')['ElPopover']
+    ElProgress: typeof import('element-plus/es')['ElProgress']
     ElRadio: typeof import('element-plus/es')['ElRadio']
     ElRadioButton: typeof import('element-plus/es')['ElRadioButton']
     ElRadioGroup: typeof import('element-plus/es')['ElRadioGroup']
@@ -68,6 +70,7 @@ declare module 'vue' {
     ParticleBg: typeof import('./components/layout/ParticleBg.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SimulationProgress: typeof import('./components/simulation/SimulationProgress.vue')['default']
     SliderVerify: typeof import('./components/login/SliderVerify.vue')['default']
     SystemConfig: typeof import('./components/simulation/SystemConfig.vue')['default']
   }

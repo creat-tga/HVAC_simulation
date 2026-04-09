@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import engine, Base, async_session
-from app.routers import projects, buildings, simulation, reports, auth
+from app.routers import projects, buildings, simulation, reports, auth, ws
 from app.services.auth_service import seed_admin
 from app.simulation.energyplus.idf_generator import ZoneValidationError
 
@@ -43,6 +43,7 @@ app.include_router(projects.router, prefix="/api")
 app.include_router(buildings.router, prefix="/api")
 app.include_router(simulation.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
+app.include_router(ws.router, prefix="/api")
 
 
 @app.get("/api/health")

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Float, Integer, DateTime, ForeignKey, JSON, Uuid, func
+from sqlalchemy import String, Float, Integer, DateTime, ForeignKey, JSON, Uuid, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -42,6 +42,15 @@ class SimulationResult(Base):
     )
     simulation_type: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="pending")
+
+    # --- Task tracking fields ---
+    task_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # --- Result data ---
     hourly_cooling_load: Mapped[list | None] = mapped_column(JSON)
     hourly_heating_load: Mapped[list | None] = mapped_column(JSON)
     hourly_energy: Mapped[list | None] = mapped_column(JSON)
