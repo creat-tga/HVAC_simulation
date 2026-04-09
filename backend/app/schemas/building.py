@@ -33,9 +33,9 @@ class WallConfig(BaseModel):
 
 
 class BuildingZone(BaseModel):
-    name: str
-    area: float
-    floor_height: float = 3.5
+    name: str = Field(..., max_length=50)
+    area: float = Field(..., ge=0.1, le=9999.9)
+    floor_height: float = Field(3.5, ge=1.0, le=100.0)
     # Zone vertical position: determines floor/roof boundary conditions
     zone_position: Literal["top", "middle", "bottom", "single"] = "single"
     # Wall exterior/interior config

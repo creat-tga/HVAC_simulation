@@ -122,7 +122,7 @@ function openBuilding(buildingId: string) {
       <el-table-column prop="name" :label="t('building.name')" min-width="120" show-overflow-tooltip />
       <el-table-column :label="t('building.type')" width="120">
         <template #default="{ row }">
-          {{ t(`building.types.${row.building_type}`) }}
+          {{ row.building_type ? t(`building.types.${row.building_type}`) : '-' }}
         </template>
       </el-table-column>
       <el-table-column :label="t('building.climateZone')" width="120">

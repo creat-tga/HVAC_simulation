@@ -158,7 +158,7 @@ export default {
       title: 'Zones',
       name: 'Zone Name',
       area: 'Zone Area(m²)',
-      floorHeight: 'Floor Height(m)',
+      floorHeight: 'Zone Height(m)',
       add: 'Add Zone',
       delete: 'Delete',
       copy: 'Copy',
@@ -170,6 +170,8 @@ export default {
       pleaseInputName: 'Enter zone name',
       pleaseInputArea: 'Enter zone area',
       lastZoneHint: 'At least one zone is required',
+      maxZonesHint: 'Maximum {max} zones allowed',
+      defaultPrefix: 'Zone',
       searchPlaceholder: 'Search zones...',
       batchAdd: 'Batch Add',
       batchCopy: 'Batch Copy',
@@ -193,6 +195,7 @@ export default {
     },
     validation: {
       minValue: 'must be at least {min}',
+      rangeValue: 'range {min} ~ {max}',
     },
     schedule: {
       fixed: 'Fixed',

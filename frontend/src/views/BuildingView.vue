@@ -66,7 +66,7 @@ function createDefaultZone(name?: string): BuildingZone {
   const preset = ZONE_PRESETS.office
   return {
     name: name || '',
-    area: 0,
+    area: 100,
     floor_height: preset.floor_height,
     zone_position: 'single',
     wall_config: { south_exterior: true, north_exterior: true, east_exterior: true, west_exterior: true },
@@ -281,7 +281,20 @@ watch(totalZones, (total) => {
 })
 
 // ----- Zone management -----
+const MAX_ZONES = 999 // 最大分区数
 const activeZone = computed(() => editZones.value[selectedZoneIdx.value] ?? null)
+
+function nextZoneNumber(): number {
+  const prefix = t('building.zone.defaultPrefix')
+  let max = 0
+  for (const z of editZones.value) {
+    if (z.name.startsWith(prefix)) {
+      const n = parseInt(z.name.slice(prefix.length).trim(), 10)
+      if (!isNaN(n) && n > max) max = n
+    }
+  }
+  return max + 1
+}
 
 // ----- Table selection for batch operations -----
 const selectedRows = ref<BuildingZone[]>([])
@@ -302,7 +315,12 @@ function handleRowClick(row: BuildingZone) {
 }
 
 function addZone() {
-  editZones.value.push(createDefaultZone())
+  if (editZones.value.length >= MAX_ZONES) {
+    ElMessage.warning(t('building.zone.maxZonesHint', { max: MAX_ZONES }))
+    return
+  }
+  const name = `${t('building.zone.defaultPrefix')}${nextZoneNumber()}`
+  editZones.value.push(createDefaultZone(name))
   nextTick(() => {
     selectedZoneIdx.value = editZones.value.length - 1
     activePresetKey.value = ''
@@ -312,6 +330,10 @@ function addZone() {
 }
 
 function copyZone(zone: BuildingZone) {
+  if (editZones.value.length >= MAX_ZONES) {
+    ElMessage.warning(t('building.zone.maxZonesHint', { max: MAX_ZONES }))
+    return
+  }
   const copy: BuildingZone = JSON.parse(JSON.stringify(zone))
   copy.name = copy.name ? `${copy.name} (${t('building.zone.copy')})` : ''
   editZones.value.push(copy)
@@ -353,7 +375,13 @@ async function batchDelete() {
 
 function batchCopy() {
   if (selectedRows.value.length === 0) return
-  const copies = selectedRows.value.map(z => {
+  const remaining = MAX_ZONES - editZones.value.length
+  if (remaining <= 0) {
+    ElMessage.warning(t('building.zone.maxZonesHint', { max: MAX_ZONES }))
+    return
+  }
+  const toCopy = selectedRows.value.slice(0, remaining)
+  const copies = toCopy.map(z => {
     const copy: BuildingZone = JSON.parse(JSON.stringify(z))
     copy.name = copy.name ? `${copy.name} (${t('building.zone.copy')})` : ''
     return copy
@@ -365,11 +393,21 @@ function batchCopy() {
 }
 
 function confirmBatchAdd() {
-  const count = Math.max(1, Math.min(batchAddCount.value, 50))
+  const remaining = MAX_ZONES - editZones.value.length
+  if (remaining <= 0) {
+    ElMessage.warning(t('building.zone.maxZonesHint', { max: MAX_ZONES }))
+    return
+  }
+  const count = Math.max(1, Math.min(batchAddCount.value, 200, remaining))
+  const prefix = batchAddName.value || t('building.zone.defaultPrefix')
+  let num = 1
+  if (!batchAddName.value) {
+    num = nextZoneNumber()
+  }
   for (let i = 0; i < count; i++) {
     const name = batchAddName.value
       ? `${batchAddName.value} ${editZones.value.length + 1}`
-      : ''
+      : `${prefix}${num + i}`
     editZones.value.push(createDefaultZone(name))
   }
   batchAddVisible.value = false
@@ -482,8 +520,8 @@ function validateZones(): string | null {
   for (let i = 0; i < editZones.value.length; i++) {
     const z = editZones.value[i]
     const label = z.name || `${t('building.zone.title')} ${i + 1}`
-    if (!z.area || z.area < 0.1) return `${label}: ${t('building.zone.area')} ${t('building.validation.minValue', { min: 0.1 })}`
-    if (!z.floor_height || z.floor_height < 1) return `${label}: ${t('building.zone.floorHeight')} ${t('building.validation.minValue', { min: 1 })}`
+    if (!z.area || z.area < 0.1 || z.area > 9999.9) return `${label}: ${t('building.zone.area')} ${t('building.validation.rangeValue', { min: 0.1, max: 9999.9 })}`
+    if (!z.floor_height || z.floor_height < 1 || z.floor_height > 100) return `${label}: ${t('building.zone.floorHeight')} ${t('building.validation.rangeValue', { min: 1, max: 100 })}`
     if (z.wall_u_value < 0.01) return `${label}: ${t('building.envelope.wallU')} ${t('building.validation.minValue', { min: 0.01 })}`
     if (z.window_u_value < 0.1) return `${label}: ${t('building.envelope.windowU')} ${t('building.validation.minValue', { min: 0.1 })}`
     if (z.roof_u_value < 0.01) return `${label}: ${t('building.envelope.roofU')} ${t('building.validation.minValue', { min: 0.01 })}`
@@ -515,6 +553,8 @@ async function handleSave() {
     building.value = data
     ElMessage.success(t('building.updateSuccess'))
     savedSnapshot.value = getStateSnapshot()
+    isDirty.value = false
+    if (_dirtyTimer) { clearTimeout(_dirtyTimer); _dirtyTimer = null }
   } finally {
     saving.value = false
   }
@@ -597,25 +637,25 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
         @row-click="handleRowClick"
         :row-class-name="({row}: {row: BuildingZone, rowIndex: number}) => editZones.indexOf(row) === selectedZoneIdx ? 'current-zone-row' : ''">
         <el-table-column type="selection" width="40" />
-        <el-table-column label="#" width="55">
+        <el-table-column label="#" width="40">
           <template #default="{ $index }">{{ (currentPage - 1) * pageSize + $index + 1 }}</template>
         </el-table-column>
-        <el-table-column :label="t('building.zone.name')" min-width="120">
+        <el-table-column :label="t('building.zone.name')" min-width="100">
           <template #default="{ row }">
             <el-input v-model="row.name" size="small" :placeholder="t('building.zone.pleaseInputName')" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.zone.area')" width="120">
+        <el-table-column :label="t('building.zone.area')" width="110">
           <template #default="{ row }">
-            <el-input-number v-model="row.area" :min="0.1" size="small" :controls="false" style="width: 100%" />
+            <el-input-number v-model="row.area" :min="0.1" :max="9999.9" :precision="1" size="small" :controls="false" style="width: 100%" />
           </template>
         </el-table-column>
         <el-table-column :label="t('building.zone.floorHeight')" width="90">
           <template #default="{ row }">
-            <el-input-number v-model="row.floor_height" :min="1" :max="50" :precision="1" size="small" :controls="false" style="width: 100%" />
+            <el-input-number v-model="row.floor_height" :min="1" :max="100" :precision="1" size="small" :controls="false" style="width: 100%" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.envelope.zonePosition')" width="90">
+        <el-table-column :label="t('building.envelope.zonePosition')" min-width="120">
           <template #default="{ row }">
             <el-select v-model="row.zone_position" size="small" style="width: 100%">
               <el-option value="single" :label="t('building.envelope.position.single')" />
@@ -625,12 +665,12 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.envelope.wallU')" width="80">
+        <el-table-column :label="t('building.envelope.wallU')" width="90">
           <template #default="{ row }">
             <el-input-number v-model="row.wall_u_value" :min="0.01" :max="20" :precision="2" size="small" :controls="false" style="width: 100%" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.envelope.windowU')" width="80">
+        <el-table-column :label="t('building.envelope.windowU')" width="90">
           <template #default="{ row }">
             <el-input-number v-model="row.window_u_value" :min="0.1" :max="20" :precision="2" size="small" :controls="false" style="width: 100%" />
           </template>
@@ -640,7 +680,7 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
             <el-input-number v-model="row.window_wall_ratio" :min="0" :max="1" :precision="2" size="small" :controls="false" style="width: 100%" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.envelope.roofU')" width="80">
+        <el-table-column :label="t('building.envelope.roofU')" width="90">
           <template #default="{ row }">
             <el-input-number v-model="row.roof_u_value" :min="0.01" :max="20" :precision="2" size="small" :controls="false" style="width: 100%" />
           </template>
@@ -669,10 +709,10 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
     <el-dialog v-model="batchAddVisible" :title="t('building.zone.batchAdd')" width="400px">
       <el-form label-width="100px">
         <el-form-item :label="t('building.zone.batchAddCount')">
-          <el-input-number v-model="batchAddCount" :min="1" :max="50" />
+          <el-input-number v-model="batchAddCount" :min="1" :max="200" />
         </el-form-item>
         <el-form-item :label="t('building.zone.batchAddPrefix')">
-          <el-input v-model="batchAddName" :placeholder="t('building.zone.batchAddPrefixHint')" />
+          <el-input v-model="batchAddName" :maxlength="20" :placeholder="t('building.zone.batchAddPrefixHint')" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -728,8 +768,8 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
             <span class="param-label">{{ t(pm.label) }}</span>
             <el-radio-group :model-value="getParam(activeZone, pm.key).mode"
               @update:model-value="v => switchMode(getParam(activeZone, pm.key), v)" size="small">
-              <el-radio-button label="fixed">{{ t('building.schedule.fixed') }}</el-radio-button>
-              <el-radio-button label="scheduled">{{ t('building.schedule.scheduled') }}</el-radio-button>
+              <el-radio-button value="fixed">{{ t('building.schedule.fixed') }}</el-radio-button>
+              <el-radio-button value="scheduled">{{ t('building.schedule.scheduled') }}</el-radio-button>
             </el-radio-group>
           </div>
 
@@ -828,8 +868,8 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
             <span class="param-label">{{ t(pm.label) }}</span>
             <el-radio-group :model-value="getParam(activeZone, pm.key).mode"
               @update:model-value="v => switchMode(getParam(activeZone, pm.key), v)" size="small">
-              <el-radio-button label="fixed">{{ t('building.schedule.fixed') }}</el-radio-button>
-              <el-radio-button label="scheduled">{{ t('building.schedule.scheduled') }}</el-radio-button>
+              <el-radio-button value="fixed">{{ t('building.schedule.fixed') }}</el-radio-button>
+              <el-radio-button value="scheduled">{{ t('building.schedule.scheduled') }}</el-radio-button>
             </el-radio-group>
           </div>
 
@@ -1002,6 +1042,10 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
 /* ---- Zone card ---- */
 .zone-card { border-radius: 8px; }
 .zone-form { padding: 4px 0; }
+
+:deep(.zone-card .el-divider__text) {
+  background: rgb(250, 252, 253);
+}
 
 /* ---- Internal gains ---- */
 .param-row {

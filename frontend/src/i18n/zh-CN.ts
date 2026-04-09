@@ -158,7 +158,7 @@ export default {
       title: '功能分区',
       name: '分区名称',
       area: '分区面积(m²)',
-      floorHeight: '层高(m)',
+      floorHeight: '分区高度(m)',
       add: '添加分区',
       delete: '删除',
       copy: '复制',
@@ -170,6 +170,8 @@ export default {
       pleaseInputName: '请输入分区名称',
       pleaseInputArea: '请输入分区面积',
       lastZoneHint: '至少保留一个分区',
+      maxZonesHint: '最多只能有 {max} 个分区',
+      defaultPrefix: '分区',
       searchPlaceholder: '搜索分区...',
       batchAdd: '批量添加',
       batchCopy: '批量复制',
@@ -193,6 +195,7 @@ export default {
     },
     validation: {
       minValue: '不能小于 {min}',
+      rangeValue: '范围 {min} ~ {max}',
     },
     schedule: {
       fixed: '固定值',

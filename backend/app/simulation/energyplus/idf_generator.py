@@ -201,7 +201,6 @@ def generate_idf(
         _global_sim_control(),
         _global_building(),
         _global_timestep(),
-        _global_shadow_calculation(),
         _global_run_period(),
         _global_location(location),
         _global_geometry_rules(),
@@ -351,9 +350,7 @@ def _global_sim_control() -> str:
 def _global_building() -> str:
     """生成 Building 对象。
 
-    地形设为 City（城市），太阳分布采用 MinimalShadowing（简化计算，shoebox 模型
-    无复杂遮挡，减少不必要的内部反射计算）。
-    预热天数保持25/3（IDD要求Maximum不应小于25，但Minimum可以减至3加速收敛判断）。
+    地形设为 City（城市），太阳分布采用 FullInteriorAndExterior（完整内外计算）。
     """
     return (
         "Building,\n"
@@ -362,33 +359,19 @@ def _global_building() -> str:
         "  City, !- Terrain\n"
         "  0.04, !- Loads Convergence Tolerance\n"
         "  0.4,  !- Temperature Convergence Tolerance\n"
-        "  MinimalShadowing, !- Solar Distribution\n"
+        "  FullInteriorAndExterior, !- Solar Distribution\n"
         "  25,   !- Maximum Number of Warmup Days\n"
-        "  3;    !- Minimum Number of Warmup Days"
+        "  6;    !- Minimum Number of Warmup Days"
     )
 
 
 def _global_timestep() -> str:
     """生成 Timestep 对象。
 
-    每小时 1 步（60分钟间隔）。对于 IdealLoads 系统，小时级精度已足够，
-    与 Timestep=4 相比精度差异 < 3%，但计算速度提升约 4 倍。
-    注意：所有材料层均包含混凝土质量层，不会出现无热质量数值不稳定。
+    每小时 4 步（15分钟间隔），EP 建议最小值为 4，
+    可避免无热质量材料导致的数值不稳定。
     """
-    return "Timestep, 1;"
-
-
-def _global_shadow_calculation() -> str:
-    """生成 ShadowCalculation 对象。
-
-    每 20 天重新计算一次阴影（默认每天），配合 MinimalShadowing 进一步减少计算量。
-    """
-    return (
-        "ShadowCalculation,\n"
-        "  PolygonClipping,              !- Shading Calculation Method\n"
-        "  Periodic,                      !- Shading Calculation Update Frequency Method\n"
-        "  20;                            !- Shading Calculation Update Frequency"
-    )
+    return "Timestep, 4;"
 
 
 def _global_run_period() -> str:
@@ -1036,6 +1019,7 @@ def _output_variables(zone_names: list[str]) -> str:
     lines = [
         "Output:Variable, *, Zone Ideal Loads Supply Air Total Cooling Energy, Hourly;",
         "Output:Variable, *, Zone Ideal Loads Supply Air Total Heating Energy, Hourly;",
+        "Output:Variable, *, Zone Mean Air Temperature, Hourly;",
         "OutputControl:Table:Style, HTML;",
         "Output:Table:SummaryReports, AllSummary;",
     ]
