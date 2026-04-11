@@ -2,11 +2,12 @@
 import { onMounted, ref, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Plus, Delete } from '@element-plus/icons-vue'
+import { Plus, Delete, VideoPlay } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
+import { useTaskTrackerStore } from '@/stores/taskTracker'
 import { getProject } from '@/api/projects'
 import { createBuilding, deleteBuilding } from '@/api/buildings'
-import { getSimulations } from '@/api/simulation'
+import { getSimulations, runLoadSimulation } from '@/api/simulation'
 import type { SimulationResult } from '@/types/simulation'
 import type { Project } from '@/types/project'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -15,6 +16,7 @@ import { getClimateZone } from '@/data/regions'
 const route = useRoute()
 const router = useRouter()
 const store = useProjectStore()
+const tracker = useTaskTrackerStore()
 const { t } = useI18n()
 
 const project = ref<Project | null>(null)
@@ -86,6 +88,42 @@ async function handleDeleteBuilding(buildingId: string) {
 function openBuilding(buildingId: string) {
   router.push(`/projects/${projectId}/buildings/${buildingId}`)
 }
+
+// --- Batch Load Simulation ---
+const runningBuildings = reactive<Set<string>>(new Set())
+
+async function handleRunLoad(building: { id: string; name: string; zones?: unknown[] | null }) {
+  if (!building.zones || building.zones.length === 0) {
+    ElMessage.warning(t('building.noZonesWarning'))
+    return
+  }
+  runningBuildings.add(building.id)
+  try {
+    const { data } = await runLoadSimulation(building.id)
+    tracker.addTask({
+      resultId: data.id,
+      buildingId: building.id,
+      buildingName: building.name,
+      simulationType: 'load',
+    })
+    ElMessage.success(t('simulation.loadCalc.taskCreated'))
+  } catch {
+    ElMessage.error(t('simulation.loadCalc.failed'))
+  } finally {
+    runningBuildings.delete(building.id)
+  }
+}
+
+async function handleRunAllLoads() {
+  const buildings = store.buildings.filter(b => b.zones && b.zones.length > 0)
+  if (buildings.length === 0) {
+    ElMessage.warning(t('building.noZonesWarning'))
+    return
+  }
+  for (const b of buildings) {
+    await handleRunLoad(b)
+  }
+}
 </script>
 
 <template>
@@ -113,9 +151,14 @@ function openBuilding(buildingId: string) {
 
     <div class="section-header">
       <h2>{{ t('building.title') }}</h2>
-      <el-button type="primary" :icon="Plus" @click="handleAddBuilding">
-        {{ t('building.add') }}
-      </el-button>
+      <div>
+        <el-button :icon="VideoPlay" @click="handleRunAllLoads" :disabled="store.buildings.length === 0">
+          {{ t('building.runAllLoads') }}
+        </el-button>
+        <el-button type="primary" :icon="Plus" @click="handleAddBuilding">
+          {{ t('building.add') }}
+        </el-button>
+      </div>
     </div>
 
     <el-table :data="store.buildings" v-loading="store.loading" stripe>
@@ -160,8 +203,17 @@ function openBuilding(buildingId: string) {
           {{ simMap[row.id] ? formatNum(simMap[row.id]?.total_cost) : t('building.noSimulation') }}
         </template>
       </el-table-column>
-      <el-table-column :label="t('common.operation')" width="200" fixed="right">
+      <el-table-column :label="t('common.operation')" width="280" fixed="right">
         <template #default="{ row }">
+          <el-button
+            size="small"
+            text
+            :icon="VideoPlay"
+            :loading="runningBuildings.has(row.id)"
+            @click="handleRunLoad(row)"
+          >
+            {{ t('building.runLoad') }}
+          </el-button>
           <el-button type="primary" size="small" text @click="openBuilding(row.id)">
             {{ t('building.config') }}
           </el-button>

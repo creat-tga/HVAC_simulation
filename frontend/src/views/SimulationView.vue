@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref, computed, onUnmounted } from 'vue'
+import { onMounted, ref, computed, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { VideoPlay } from '@element-plus/icons-vue'
 import { useSimulationStore } from '@/stores/simulation'
-import { runSimulation, cancelSimulation } from '@/api/simulation'
-import type { SimulationCreate } from '@/types/simulation'
+import { useTaskTrackerStore } from '@/stores/taskTracker'
+import { runEnergySimulation, cancelSimulation, getSimulationStatus } from '@/api/simulation'
 import { useSimulationWs } from '@/composables/useSimulationWs'
 import SimulationProgress from '@/components/simulation/SimulationProgress.vue'
 import { ElMessage } from 'element-plus'
@@ -14,6 +14,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const store = useSimulationStore()
+const tracker = useTaskTrackerStore()
 
 const buildingId = route.params.buildingId as string
 const projectId = route.params.projectId as string
@@ -24,23 +25,27 @@ const activeResultId = ref<string | null>(null)
 const { status: wsStatus, progress: wsProgress, message: wsMessage, connected: wsConnected } =
   useSimulationWs(activeResultId)
 
-// Polling fallback (when WebSocket is not available)
+// Polling fallback status
+const pollStatus = ref<string>('pending')
+const pollProgress = ref(0)
+const pollMessage = ref('')
+
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 function startPolling() {
   stopPolling()
   pollTimer = setInterval(async () => {
-    if (activeResultId.value) {
-      await store.fetchResults(buildingId)
-      const active = store.results.find((r) => r.id === activeResultId.value)
-      if (active && ['completed', 'failed', 'cancelled'].includes(active.status)) {
-        stopTracking()
-        if (active.status === 'completed') {
-          ElMessage.success(t('simulation.progress.completed'))
-        } else if (active.status === 'failed') {
-          ElMessage.error(active.error_message || t('simulation.runFailed'))
-        }
+    if (!activeResultId.value) return
+    try {
+      const { data } = await getSimulationStatus(buildingId, activeResultId.value)
+      pollStatus.value = data.status
+      pollProgress.value = data.progress ?? 0
+      pollMessage.value = data.error_message || ''
+      if (['completed', 'failed', 'cancelled'].includes(data.status)) {
+        handleTaskComplete(data.status, data.error_message || undefined)
       }
+    } catch {
+      // ignore
     }
   }, 3000)
 }
@@ -52,57 +57,70 @@ function stopPolling() {
   }
 }
 
+function handleTaskComplete(status: string, errorMessage?: string) {
+  if (activeResultId.value) {
+    tracker.updateTask(activeResultId.value, { status, progress: status === 'completed' ? 100 : undefined, errorMessage })
+  }
+  if (status === 'completed') {
+    ElMessage.success(t('simulation.progress.completed'))
+  } else if (status === 'failed') {
+    ElMessage.error(errorMessage || t('simulation.runFailed'))
+  } else if (status === 'cancelled') {
+    ElMessage.warning(t('simulation.progress.cancelled'))
+  }
+  stopTracking()
+  store.fetchEnergyResults(buildingId)
+}
+
 function stopTracking() {
   activeResultId.value = null
   simRunning.value = false
   stopPolling()
-  store.fetchResults(buildingId)
 }
 
 // Watch WebSocket terminal states
-const isTerminal = computed(() =>
-  ['completed', 'failed', 'cancelled'].includes(wsStatus.value),
+watch(
+  () => wsStatus.value,
+  (newStatus) => {
+    if (['completed', 'failed', 'cancelled'].includes(newStatus) && activeResultId.value) {
+      handleTaskComplete(newStatus, wsMessage.value || undefined)
+    }
+  },
 )
 
-// Use watchEffect for terminal state handling
-const unwatchTerminal = ref<ReturnType<typeof import('vue').watch> | null>(null)
+// Check if load simulation is complete
+const hasLoadResult = computed(() => store.latestLoadResult !== null)
 
-function watchTerminalState() {
-  unwatchTerminal.value = watch(isTerminal, (terminal) => {
-    if (terminal && activeResultId.value) {
-      if (wsStatus.value === 'completed') {
-        ElMessage.success(t('simulation.progress.completed'))
-      } else if (wsStatus.value === 'failed') {
-        ElMessage.error(wsMessage.value || t('simulation.runFailed'))
-      } else if (wsStatus.value === 'cancelled') {
-        ElMessage.warning(t('simulation.progress.cancelled'))
+onMounted(async () => {
+  await Promise.all([
+    store.fetchSystems(buildingId),
+    store.fetchLoadResults(buildingId),
+    store.fetchEnergyResults(buildingId),
+  ])
+
+  // Check for active (pending/running) energy simulation
+  const active = store.energyResults.find(r => ['pending', 'running'].includes(r.status))
+  if (active) {
+    activeResultId.value = active.id
+    simRunning.value = true
+    // Immediate status check before starting polling
+    try {
+      const { data } = await getSimulationStatus(buildingId, active.id)
+      if (['completed', 'failed', 'cancelled'].includes(data.status)) {
+        activeResultId.value = null
+        simRunning.value = false
+        await store.fetchEnergyResults(buildingId)
+      } else {
+        startPolling()
       }
-      stopTracking()
-    }
-  })
-}
-
-onMounted(() => {
-  store.fetchSystems(buildingId)
-  store.fetchResults(buildingId)
-
-  // Check for any active (non-terminal) simulations to auto-track
-  store.fetchResults(buildingId).then(() => {
-    const active = store.results.find((r) =>
-      ['pending', 'running'].includes(r.status),
-    )
-    if (active) {
-      activeResultId.value = active.id
-      simRunning.value = true
+    } catch {
       startPolling()
-      watchTerminalState()
     }
-  })
+  }
 })
 
 onUnmounted(() => {
   stopPolling()
-  if (unwatchTerminal.value) unwatchTerminal.value()
 })
 
 async function handleRunSimulation() {
@@ -110,20 +128,25 @@ async function handleRunSimulation() {
     ElMessage.warning(t('system.pleaseAddSystem'))
     return
   }
+  if (!store.latestLoadResult) {
+    ElMessage.warning(t('simulation.energyStep.noLoadResult'))
+    return
+  }
+
   simRunning.value = true
   try {
-    const data: SimulationCreate = { simulation_type: 'full_year' }
-    const { data: result } = await runSimulation(buildingId, data)
+    const { data } = await runEnergySimulation(buildingId, store.latestLoadResult.id)
     ElMessage.success(t('simulation.taskCreated'))
-
-    // Start tracking
-    activeResultId.value = result.id
+    activeResultId.value = data.id
+    tracker.addTask({
+      resultId: data.id,
+      buildingId,
+      buildingName: t('simulation.energyStep.title'),
+      simulationType: 'energy',
+    })
     startPolling()
-    watchTerminalState()
-
-    store.fetchResults(buildingId)
-  } catch {
-    ElMessage.error(t('simulation.runFailed'))
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || t('simulation.runFailed'))
     simRunning.value = false
   }
 }
@@ -134,6 +157,7 @@ async function handleCancelSimulation() {
     await cancelSimulation(buildingId, activeResultId.value)
     ElMessage.warning(t('simulation.progress.cancelled'))
     stopTracking()
+    store.fetchEnergyResults(buildingId)
   } catch {
     ElMessage.error(t('simulation.progress.cancelFailed'))
   }
@@ -146,6 +170,10 @@ function viewReport(resultId: string) {
 function goBack() {
   router.push(`/projects/${projectId}/buildings/${buildingId}/system`)
 }
+
+function goToLoadCalc() {
+  router.push(`/projects/${projectId}/buildings/${buildingId}/load`)
+}
 </script>
 
 <template>
@@ -157,12 +185,13 @@ function goBack() {
     <el-card>
       <div class="step-desc">
         <p>{{ t('simulation.energyStep.description') }}</p>
-        <div v-if="store.loadPreviewData" class="load-reference">
-          <el-tag type="info" effect="plain">
-            {{ t('simulation.loadPreview.peakCooling') }}: {{ store.loadPreviewData.peak_cooling_load.toFixed(1) }} kW
+        <!-- Load result reference -->
+        <div v-if="store.latestLoadResult" class="load-reference">
+          <el-tag type="success" effect="plain">
+            {{ t('simulation.loadPreview.peakCooling') }}: {{ store.latestLoadResult.peak_cooling_load?.toFixed(1) || '-' }} kW
           </el-tag>
           <el-tag type="warning" effect="plain">
-            {{ t('simulation.loadPreview.peakHeating') }}: {{ store.loadPreviewData.peak_heating_load.toFixed(1) }} kW
+            {{ t('simulation.loadPreview.peakHeating') }}: {{ store.latestLoadResult.peak_heating_load?.toFixed(1) || '-' }} kW
           </el-tag>
           <el-tag type="success" effect="plain">
             {{ t('system.title') }}: {{ store.systems.length }} {{ t('simulation.systemCount') }}
@@ -170,7 +199,15 @@ function goBack() {
         </div>
       </div>
 
-      <div v-if="!store.systemConfigured" class="hint-area">
+      <!-- No load result -->
+      <div v-if="!hasLoadResult" class="hint-area">
+        <el-empty :description="t('simulation.energyStep.noLoadResult')">
+          <el-button type="primary" @click="goToLoadCalc">{{ t('simulation.energyStep.goToLoadCalc') }}</el-button>
+        </el-empty>
+      </div>
+
+      <!-- No HVAC system -->
+      <div v-else-if="!store.systemConfigured" class="hint-area">
         <el-empty :description="t('simulation.energyStep.hint')">
           <el-button type="primary" @click="goBack">{{ t('system.add') }}</el-button>
         </el-empty>
@@ -180,9 +217,9 @@ function goBack() {
         <!-- Progress Tracker -->
         <SimulationProgress
           v-if="activeResultId"
-          :status="wsConnected ? wsStatus : 'running'"
-          :progress="wsConnected ? wsProgress : 0"
-          :message="wsConnected ? wsMessage : t('simulation.progress.connecting')"
+          :status="wsConnected ? wsStatus : pollStatus"
+          :progress="wsConnected ? wsProgress : pollProgress"
+          :message="wsConnected ? wsMessage : (pollMessage || t('simulation.progress.polling'))"
           :connected="wsConnected"
           @cancel="handleCancelSimulation"
         />
@@ -200,10 +237,9 @@ function goBack() {
         </div>
 
         <!-- Results Table -->
-        <div v-if="store.results.length > 0" class="results-section">
+        <div v-if="store.energyResults.length > 0" class="results-section">
           <h3>{{ t('simulation.results') }}</h3>
-          <el-table :data="store.results" stripe>
-            <el-table-column prop="simulation_type" :label="t('simulation.type')" width="120" />
+          <el-table :data="store.energyResults" stripe>
             <el-table-column :label="t('simulation.status')" width="120">
               <template #default="{ row }">
                 <el-tag :type="row.status === 'completed' ? 'success' : row.status === 'failed' ? 'danger' : row.status === 'cancelled' ? 'warning' : 'info'">

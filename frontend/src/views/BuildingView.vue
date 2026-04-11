@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getBuilding, updateBuilding } from '@/api/buildings'
+import { getSimulations } from '@/api/simulation'
 import type { Building, BuildingUpdate, BuildingZone, ParamConfig, DaySchedule, ZonePosition, WallConfig } from '@/types/building'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Edit, Plus, Delete, ArrowDown, CopyDocument, FolderAdd } from '@element-plus/icons-vue'
@@ -234,24 +235,22 @@ watch(editZones, () => {
   _conflictTimer = setTimeout(_checkConflicts, 500)
 }, { deep: true })
 
-// ----- Unsaved changes detection (debounced) -----
-const savedSnapshot = ref('')
+// ----- Unsaved changes detection (version-based) -----
+const editVersion = ref(0)
+const savedVersion = ref(0)
+const _initializing = ref(true)
+const isDirty = computed(() => editVersion.value !== savedVersion.value)
 
-function getStateSnapshot(): string {
-  return JSON.stringify({ name: editName.value, zones: editZones.value })
+function markDirty() {
+  if (_initializing.value) return
+  editVersion.value++
 }
 
-const isDirty = ref(false)
+// Use deep watcher only to bump version counter (cheap operation)
 let _dirtyTimer: ReturnType<typeof setTimeout> | null = null
-
-function _checkDirty() {
-  if (!savedSnapshot.value) { isDirty.value = false; return }
-  isDirty.value = getStateSnapshot() !== savedSnapshot.value
-}
-
 watch([editName, editZones], () => {
   if (_dirtyTimer) clearTimeout(_dirtyTimer)
-  _dirtyTimer = setTimeout(_checkDirty, 600)
+  _dirtyTimer = setTimeout(markDirty, 500)
 }, { deep: true })
 
 // ----- Zone table pagination -----
@@ -511,7 +510,11 @@ onMounted(async () => {
       relative_humidity: createParamConfig(50),
     }]
   }
-  nextTick(() => { savedSnapshot.value = getStateSnapshot() })
+  nextTick(() => {
+    savedVersion.value = editVersion.value
+    // Allow dirty detection after initial load settles (debounce is 500ms)
+    setTimeout(() => { _initializing.value = false }, 600)
+  })
   window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
@@ -540,6 +543,25 @@ async function handleSave() {
     ElMessage.error(validationError)
     return
   }
+
+  // Check if zones changed — if so, simulation results will be cleared
+  const zonesChanged = JSON.stringify(editZones.value) !== JSON.stringify(building.value?.zones)
+  if (zonesChanged) {
+    try {
+      const { data: sims } = await getSimulations(buildingId)
+      if (sims.length > 0) {
+        await ElMessageBox.confirm(
+          t('building.simClearWarning'),
+          t('common.warning'),
+          { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') }
+        )
+      }
+    } catch (e: any) {
+      if (e === 'cancel' || e?.message === 'cancel') return
+      // If getSimulations fails, proceed without warning
+    }
+  }
+
   saving.value = true
   try {
     const update: BuildingUpdate = {
@@ -552,8 +574,7 @@ async function handleSave() {
     const { data } = await updateBuilding(projectId, buildingId, update)
     building.value = data
     ElMessage.success(t('building.updateSuccess'))
-    savedSnapshot.value = getStateSnapshot()
-    isDirty.value = false
+    savedVersion.value = editVersion.value
     if (_dirtyTimer) { clearTimeout(_dirtyTimer); _dirtyTimer = null }
   } finally {
     saving.value = false
@@ -823,7 +844,7 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
               <div class="schedule-line">
                 <span class="schedule-sub-label">{{ t('building.schedule.weekdays') }}:</span>
                 <el-checkbox-group v-model="sch.days" size="small" class="day-checkboxes">
-                  <el-checkbox-button v-for="d in [1,2,3,4,5,6,7]" :key="d" :label="d">
+                  <el-checkbox-button v-for="d in [1,2,3,4,5,6,7]" :key="d" :value="d">
                     {{ t(`building.schedule.dayNames.${d}`) }}
                   </el-checkbox-button>
                 </el-checkbox-group>
@@ -917,7 +938,7 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
               <div class="schedule-line">
                 <span class="schedule-sub-label">{{ t('building.schedule.weekdays') }}:</span>
                 <el-checkbox-group v-model="sch.days" size="small" class="day-checkboxes">
-                  <el-checkbox-button v-for="d in [1,2,3,4,5,6,7]" :key="d" :label="d">
+                  <el-checkbox-button v-for="d in [1,2,3,4,5,6,7]" :key="d" :value="d">
                     {{ t(`building.schedule.dayNames.${d}`) }}
                   </el-checkbox-button>
                 </el-checkbox-group>

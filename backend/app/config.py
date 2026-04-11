@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # Application
     app_name: str = "HVAC仿真平台"
-    debug: bool = True
+    debug: bool = False
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./hvac_simulation.db"
@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
     celery_worker_concurrency: int = 2
+
+    # SQL debug logging (separate from app debug)
+    sql_echo: bool = False
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

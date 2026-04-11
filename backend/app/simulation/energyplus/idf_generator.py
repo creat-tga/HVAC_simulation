@@ -43,7 +43,7 @@ FILM_R_EXT = 0.04   # 外表面膜热阻
 # 各字段的取值范围约束: (min, max)
 _ZONE_FIELD_RANGES: dict[str, tuple[float, float]] = {
     "area":              (0.1,   1_000_000),   # m²
-    "floor_height":      (1.0,   50.0),        # m
+    "floor_height":      (1.0,   100.0),        # m
     "wall_u_value":      (0.01,  20.0),        # W/m²·K
     "window_u_value":    (0.1,   20.0),        # W/m²·K
     "window_wall_ratio": (0.0,   1.0),

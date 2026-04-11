@@ -31,7 +31,7 @@ const router = createRouter({
       path: '/projects/:projectId/buildings/:buildingId/load',
       name: 'loadCalc',
       component: () => import('@/views/LoadCalcView.vue'),
-      meta: { title: '负荷计算' },
+      meta: { title: '负荷与气象' },
     },
     {
       path: '/projects/:projectId/buildings/:buildingId/system',

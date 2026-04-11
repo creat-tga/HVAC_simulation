@@ -1,9 +1,10 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.building import Building
+from app.models.simulation import SimulationResult
 from app.schemas.building import BuildingCreate, BuildingUpdate
 
 
@@ -38,7 +39,13 @@ async def update_building(
     building = await db.get(Building, building_id)
     if not building:
         return None
-    for key, value in data.model_dump(exclude_unset=True).items():
+    update_data = data.model_dump(exclude_unset=True)
+    # If zones are changed, clear simulation results (they become invalid)
+    if "zones" in update_data:
+        await db.execute(
+            delete(SimulationResult).where(SimulationResult.building_id == building_id)
+        )
+    for key, value in update_data.items():
         setattr(building, key, value)
     await db.commit()
     await db.refresh(building)

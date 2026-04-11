@@ -43,6 +43,11 @@ class SimulationResult(Base):
     simulation_type: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="pending")
 
+    # Reference to load simulation result (for energy-only simulations)
+    load_result_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(), ForeignKey("simulation_results.id", ondelete="SET NULL"), nullable=True
+    )
+
     # --- Task tracking fields ---
     task_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     progress: Mapped[int] = mapped_column(Integer, default=0)

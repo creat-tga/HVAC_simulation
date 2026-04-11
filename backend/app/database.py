@@ -12,7 +12,7 @@ if settings.database_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
 
 engine = create_async_engine(
-    settings.database_url, echo=settings.debug, connect_args=connect_args
+    settings.database_url, echo=settings.sql_echo, connect_args=connect_args
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -30,7 +30,7 @@ _sync_connect_args = {}
 if _sync_url.startswith("sqlite"):
     _sync_connect_args["check_same_thread"] = False
 
-sync_engine = create_engine(_sync_url, echo=settings.debug, connect_args=_sync_connect_args)
+sync_engine = create_engine(_sync_url, echo=settings.sql_echo, connect_args=_sync_connect_args)
 SyncSession = sessionmaker(sync_engine, class_=Session, expire_on_commit=False)
 
 

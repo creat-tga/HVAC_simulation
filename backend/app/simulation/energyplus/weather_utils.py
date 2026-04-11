@@ -361,3 +361,40 @@ def find_epw_for_location(
                     return epw, parse_epw_header(epw)
 
     return None, {}
+
+
+def parse_epw_hourly(epw_path: Path) -> dict[str, Any]:
+    """解析 EPW 文件逐时气象数据。
+
+    返回:
+        {
+            "dry_bulb_temperature": [8760 floats],   # 干球温度 (°C)
+            "dew_point_temperature": [8760 floats],  # 露点温度 (°C)
+            "relative_humidity": [8760 floats]       # 相对湿度 (%)
+        }
+    """
+    header = parse_epw_header(epw_path)
+    dry_bulb: list[float] = []
+    dew_point: list[float] = []
+    rel_humidity: list[float] = []
+
+    with open(epw_path, "r", encoding="utf-8", errors="replace") as f:
+        # Skip 8 header lines
+        for _ in range(8):
+            f.readline()
+        for line in f:
+            parts = line.strip().split(",")
+            if len(parts) < 10:
+                continue
+            try:
+                dry_bulb.append(float(parts[6]))
+                dew_point.append(float(parts[7]))
+                rel_humidity.append(float(parts[8]))
+            except (ValueError, IndexError):
+                continue
+
+    return {
+        "dry_bulb_temperature": dry_bulb,
+        "dew_point_temperature": dew_point,
+        "relative_humidity": rel_humidity
+    }

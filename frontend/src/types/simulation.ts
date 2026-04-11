@@ -33,6 +33,7 @@ export interface SimulationResult {
   task_id: string | null
   progress: number
   error_message: string | null
+  load_result_id: string | null
   total_cooling_load: number | null
   total_heating_load: number | null
   total_energy: number | null

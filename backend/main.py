@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -9,6 +10,17 @@ from app.database import engine, Base, async_session
 from app.routers import projects, buildings, simulation, reports, auth, ws
 from app.services.auth_service import seed_admin
 from app.simulation.energyplus.idf_generator import ZoneValidationError
+
+# Configure logging — reduce noise from libraries
+logging.basicConfig(
+    level=logging.DEBUG if settings.debug else logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+# Suppress noisy loggers
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
@@ -48,7 +60,12 @@ app.include_router(ws.router, prefix="/api")
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "app": settings.app_name}
+    from app.utils.redis_check import is_redis_available
+    return {
+        "status": "ok",
+        "app": settings.app_name,
+        "redis_available": is_redis_available(),
+    }
 
 
 @app.exception_handler(ZoneValidationError)

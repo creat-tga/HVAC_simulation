@@ -38,6 +38,7 @@ class HVACSystemResponse(BaseModel):
 # Simulation schemas
 class SimulationCreate(BaseModel):
     simulation_type: str = Field(..., max_length=100)
+    load_result_id: uuid.UUID | None = None  # For energy sim: reference to completed load sim
 
 
 class SimulationResponse(BaseModel):
@@ -48,6 +49,7 @@ class SimulationResponse(BaseModel):
     task_id: str | None = None
     progress: int = 0
     error_message: str | None = None
+    load_result_id: uuid.UUID | None = None
     total_cooling_load: float | None = None
     total_heating_load: float | None = None
     total_energy: float | None = None

@@ -10,9 +10,22 @@ import type {
   LoadPreview,
 } from '@/types/simulation'
 
-// Load Preview
+// Load Preview (legacy sync)
 export function previewLoad(buildingId: string) {
   return api.post<LoadPreview>(`/buildings/${buildingId}/load-preview`)
+}
+
+// Load Simulation (background task)
+export function runLoadSimulation(buildingId: string) {
+  return api.post<SimulationResult>(`/buildings/${buildingId}/load-simulation`)
+}
+
+// Energy Simulation (uses existing load results)
+export function runEnergySimulation(buildingId: string, loadResultId: string) {
+  return api.post<SimulationResult>(`/buildings/${buildingId}/energy-simulation`, {
+    simulation_type: 'energy',
+    load_result_id: loadResultId,
+  })
 }
 
 // HVAC Systems
@@ -32,9 +45,10 @@ export function deleteHVACSystem(buildingId: string, systemId: string) {
   return api.delete(`/buildings/${buildingId}/systems/${systemId}`)
 }
 
-// Simulations
-export function getSimulations(buildingId: string) {
-  return api.get<SimulationResult[]>(`/buildings/${buildingId}/simulations`)
+// Simulations (generic)
+export function getSimulations(buildingId: string, simulationType?: string) {
+  const params = simulationType ? { simulation_type: simulationType } : {}
+  return api.get<SimulationResult[]>(`/buildings/${buildingId}/simulations`, { params })
 }
 
 export function runSimulation(buildingId: string, data: SimulationCreate) {
@@ -51,4 +65,18 @@ export function getSimulationStatus(buildingId: string, resultId: string) {
 
 export function cancelSimulation(buildingId: string, resultId: string) {
   return api.post<SimulationStatus>(`/buildings/${buildingId}/simulations/${resultId}/cancel`)
+}
+
+export function clearSimulations(buildingId: string, simulationType?: string) {
+  const params = simulationType ? { simulation_type: simulationType } : {}
+  return api.delete(`/buildings/${buildingId}/simulations`, { params })
+}
+
+export function getWeatherData(buildingId: string) {
+  return api.get<{
+    dry_bulb_temperature: number[]
+    dew_point_temperature: number[]
+    relative_humidity: number[]
+    location: { name: string; lat: number; lon: number; elev: number }
+  }>(`/buildings/${buildingId}/weather-data`)
 }

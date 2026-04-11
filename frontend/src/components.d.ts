@@ -66,6 +66,7 @@ declare module 'vue' {
     ElText: typeof import('element-plus/es')['ElText']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     EnergyChart: typeof import('./components/charts/EnergyChart.vue')['default']
+    GlobalTaskTracker: typeof import('./components/simulation/GlobalTaskTracker.vue')['default']
     LoadChart: typeof import('./components/charts/LoadChart.vue')['default']
     ParticleBg: typeof import('./components/layout/ParticleBg.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
@@ -73,6 +74,7 @@ declare module 'vue' {
     SimulationProgress: typeof import('./components/simulation/SimulationProgress.vue')['default']
     SliderVerify: typeof import('./components/login/SliderVerify.vue')['default']
     SystemConfig: typeof import('./components/simulation/SystemConfig.vue')['default']
+    WeatherChart: typeof import('./components/charts/WeatherChart.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']
