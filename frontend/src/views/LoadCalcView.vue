@@ -9,6 +9,7 @@ import { useSimulationWs } from '@/composables/useSimulationWs'
 import SimulationProgress from '@/components/simulation/SimulationProgress.vue'
 import LoadChart from '@/components/charts/LoadChart.vue'
 import WeatherChart from '@/components/charts/WeatherChart.vue'
+import StepNav from '@/components/layout/StepNav.vue'
 import { ElMessage } from 'element-plus'
 
 const { t } = useI18n()
@@ -220,25 +221,25 @@ const displayData = computed(() => completedLoadData.value)
       <template v-else-if="weatherData">
         <!-- Weather Summary -->
         <el-row :gutter="16" class="load-summary">
-          <el-col :span="6">
+          <el-col :xs="12" :sm="6">
             <div class="summary-card summary-cooling">
               <div class="summary-label">{{ t('weather.maxDryBulb') }}</div>
               <div class="summary-value">{{ Math.max(...weatherData.dry_bulb_temperature).toFixed(1) }} <span>°C</span></div>
             </div>
           </el-col>
-          <el-col :span="6">
+          <el-col :xs="12" :sm="6">
             <div class="summary-card summary-heating">
               <div class="summary-label">{{ t('weather.minDryBulb') }}</div>
               <div class="summary-value">{{ Math.min(...weatherData.dry_bulb_temperature).toFixed(1) }} <span>°C</span></div>
             </div>
           </el-col>
-          <el-col :span="6">
+          <el-col :xs="12" :sm="6">
             <div class="summary-card summary-peak-cool">
               <div class="summary-label">{{ t('weather.avgDryBulb') }}</div>
               <div class="summary-value">{{ (weatherData.dry_bulb_temperature.reduce((a, b) => a + b, 0) / weatherData.dry_bulb_temperature.length).toFixed(1) }} <span>°C</span></div>
             </div>
           </el-col>
-          <el-col :span="6">
+          <el-col :xs="12" :sm="6">
             <div class="summary-card summary-peak-heat">
               <div class="summary-label">{{ t('weather.avgHumidity') }}</div>
               <div class="summary-value">{{ (weatherData.relative_humidity.reduce((a, b) => a + b, 0) / weatherData.relative_humidity.length).toFixed(0) }} <span>%</span></div>
@@ -278,25 +279,25 @@ const displayData = computed(() => completedLoadData.value)
       <template v-if="displayData">
         <!-- Load Summary Cards -->
         <el-row :gutter="16" class="load-summary">
-          <el-col :span="6">
+          <el-col :xs="12" :sm="6">
             <div class="summary-card summary-cooling">
               <div class="summary-label">{{ t('simulation.loadPreview.totalCooling') }}</div>
               <div class="summary-value">{{ (displayData.total_cooling_load / 1000).toFixed(1) }} <span>MWh</span></div>
             </div>
           </el-col>
-          <el-col :span="6">
+          <el-col :xs="12" :sm="6">
             <div class="summary-card summary-heating">
               <div class="summary-label">{{ t('simulation.loadPreview.totalHeating') }}</div>
               <div class="summary-value">{{ (displayData.total_heating_load / 1000).toFixed(1) }} <span>MWh</span></div>
             </div>
           </el-col>
-          <el-col :span="6">
+          <el-col :xs="12" :sm="6">
             <div class="summary-card summary-peak-cool">
               <div class="summary-label">{{ t('simulation.loadPreview.peakCooling') }}</div>
               <div class="summary-value">{{ displayData.peak_cooling_load.toFixed(1) }} <span>kW</span></div>
             </div>
           </el-col>
-          <el-col :span="6">
+          <el-col :xs="12" :sm="6">
             <div class="summary-card summary-peak-heat">
               <div class="summary-label">{{ t('simulation.loadPreview.peakHeating') }}</div>
               <div class="summary-value">{{ displayData.peak_heating_load.toFixed(1) }} <span>kW</span></div>
@@ -313,16 +314,13 @@ const displayData = computed(() => completedLoadData.value)
     </el-card>
 
     <!-- Navigation -->
-    <div class="nav-buttons">
-      <el-button @click="goBack">← {{ t('nav.buildingConfig') }}</el-button>
-      <el-button
-        type="primary"
-        :disabled="!store.loadCompleted"
-        @click="goToSystemSelect"
-      >
-        {{ t('simulation.loadPreview.nextStep') }} →
-      </el-button>
-    </div>
+    <StepNav
+      :prev-label="t('nav.buildingConfig')"
+      :next-label="t('simulation.loadPreview.nextStep')"
+      :next-disabled="!store.loadCompleted"
+      @prev="goBack"
+      @next="goToSystemSelect"
+    />
   </div>
 </template>
 
@@ -399,9 +397,19 @@ const displayData = computed(() => completedLoadData.value)
   border-color: rgba(239, 68, 68, 0.2);
 }
 
-.nav-buttons {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 24px;
+@media (max-width: 768px) {
+  .page-header h1 {
+    font-size: 18px;
+  }
+
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .summary-card .summary-value {
+    font-size: 18px;
+  }
 }
 </style>

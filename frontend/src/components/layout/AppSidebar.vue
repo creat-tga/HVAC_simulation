@@ -6,11 +6,6 @@ import { useProjectStore } from '@/stores/project'
 import {
   HomeFilled,
   OfficeBuilding,
-  Setting,
-  DataAnalysis,
-  Document,
-  Cpu,
-  Operation,
   ArrowDown,
 } from '@element-plus/icons-vue'
 
@@ -119,13 +114,13 @@ function switchBuilding(bid: string) {
             <span class="building-name">{{ currentBuilding?.name || '—' }}</span>
           </div>
 
-          <!-- Building Sub-items -->
+          <!-- Building Sub-items (workflow steps) -->
           <div
             class="nav-item sub-item"
             :class="{ 'is-active': isActive('building') }"
             @click="navigate(`/projects/${projectId}/buildings/${buildingId}`)"
           >
-            <el-icon :size="14"><Setting /></el-icon>
+            <span class="step-badge">1</span>
             <span>{{ t('nav.buildingConfig') }}</span>
           </div>
           <div
@@ -133,7 +128,7 @@ function switchBuilding(bid: string) {
             :class="{ 'is-active': isActive('loadCalc') }"
             @click="navigate(`/projects/${projectId}/buildings/${buildingId}/load`)"
           >
-            <el-icon :size="14"><Cpu /></el-icon>
+            <span class="step-badge">2</span>
             <span>{{ t('nav.loadWeather') }}</span>
           </div>
           <div
@@ -141,7 +136,7 @@ function switchBuilding(bid: string) {
             :class="{ 'is-active': isActive('systemSelect') }"
             @click="navigate(`/projects/${projectId}/buildings/${buildingId}/system`)"
           >
-            <el-icon :size="14"><Operation /></el-icon>
+            <span class="step-badge">3</span>
             <span>{{ t('nav.systemSelect') }}</span>
           </div>
         </div>
@@ -154,7 +149,7 @@ function switchBuilding(bid: string) {
             :class="{ 'is-active': isActive('simulation') }"
             @click="navigate(`/projects/${projectId}/buildings/${buildingId}/simulation`)"
           >
-            <el-icon :size="16"><DataAnalysis /></el-icon>
+            <span class="step-badge">4</span>
             <span>{{ t('nav.simulation') }}</span>
           </div>
           <div
@@ -163,7 +158,7 @@ function switchBuilding(bid: string) {
             :class="{ 'is-active': isActive('report') }"
             @click="navigate(`/projects/${projectId}/buildings/${buildingId}/report/${resultId}`)"
           >
-            <el-icon :size="16"><Document /></el-icon>
+            <span class="step-badge">5</span>
             <span>{{ t('nav.report') }}</span>
           </div>
         </div>
@@ -257,6 +252,27 @@ function switchBuilding(bid: string) {
   box-shadow: inset 3px 0 0 #06b6d4;
 }
 
+/* ── Step Badge ── */
+.step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  transition: all 0.18s ease;
+}
+
+.nav-item.is-active .step-badge {
+  background: rgba(8, 145, 178, 0.15);
+  color: #0891b2;
+}
+
 /* ── Building Switcher ── */
 .building-switcher {
   display: block;
@@ -313,5 +329,22 @@ function switchBuilding(bid: string) {
   color: #0891b2;
   font-weight: 600;
   background: rgba(6, 182, 212, 0.06);
+}
+
+@media (max-width: 768px) {
+  .nav-item {
+    padding: 12px 14px;
+    font-size: 14px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .nav-item.sub-item {
+    padding: 10px 14px 10px 28px;
+    font-size: 14px;
+  }
+
+  .sidebar-nav {
+    padding: 16px 8px;
+  }
 }
 </style>

@@ -307,4 +307,36 @@ function handleSubmit() {
 .equipment-row .el-form-item {
   margin-bottom: 8px;
 }
+
+@media (max-width: 768px) {
+  .system-config :deep(.el-form-item__label) {
+    float: none;
+    display: block;
+    text-align: left;
+    padding-bottom: 4px;
+    width: 100% !important;
+  }
+
+  .system-config :deep(.el-form-item__content) {
+    margin-left: 0 !important;
+  }
+
+  .equipment-row {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .system-config :deep(.el-input-number) {
+    width: 100% !important;
+  }
+
+  .system-config :deep(.el-row) {
+    flex-direction: column;
+  }
+
+  .system-config :deep(.el-col) {
+    max-width: 100%;
+    flex: 0 0 100%;
+  }
+}
 </style>

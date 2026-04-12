@@ -12,7 +12,7 @@ class ChillerSystem(HVACSystemModel):
 
     @property
     def system_type(self) -> str:
-        return "chiller"
+        return "efficient_chiller_plant"
 
     def simulate(self, input_data: SimulationInput) -> SimulationOutput:
         cop = self.spec.cop or 5.0

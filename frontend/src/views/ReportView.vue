@@ -10,6 +10,9 @@ import LoadChart from '@/components/charts/LoadChart.vue'
 import EnergyChart from '@/components/charts/EnergyChart.vue'
 import CostChart from '@/components/charts/CostChart.vue'
 
+import { useResponsive } from '@/composables/useResponsive'
+
+const { isMobile } = useResponsive()
 const { t } = useI18n()
 const route = useRoute()
 const buildingId = route.params.buildingId as string
@@ -53,16 +56,16 @@ onMounted(async () => {
     <template v-if="energyReport || costReport || carbonReport">
       <!-- Summary Cards -->
       <el-row :gutter="20" class="summary-cards">
-        <el-col :span="6">
+        <el-col :xs="12" :sm="6">
           <el-statistic :title="t('report.totalCooling')" :value="energyReport?.total_cooling_load ?? 0" />
         </el-col>
-        <el-col :span="6">
+        <el-col :xs="12" :sm="6">
           <el-statistic :title="t('report.totalHeating')" :value="energyReport?.total_heating_load ?? 0" />
         </el-col>
-        <el-col :span="6">
+        <el-col :xs="12" :sm="6">
           <el-statistic :title="t('report.totalEnergy')" :value="energyReport?.total_energy ?? 0" />
         </el-col>
-        <el-col :span="6">
+        <el-col :xs="12" :sm="6">
           <el-statistic :title="t('report.totalCarbon')" :value="carbonReport?.total_carbon ?? 0" />
         </el-col>
       </el-row>
@@ -85,7 +88,7 @@ onMounted(async () => {
 
         <el-tab-pane :label="t('report.costAnalysis')" name="cost">
           <template v-if="costReport">
-            <el-descriptions :column="3" border class="summary-desc">
+            <el-descriptions :column="isMobile ? 1 : 3" border class="summary-desc">
               <el-descriptions-item :label="t('report.totalCost')">¥{{ costReport.total_cost.toFixed(2) }}</el-descriptions-item>
               <el-descriptions-item :label="t('report.electricityCost')">¥{{ costReport.electricity_cost.toFixed(2) }}</el-descriptions-item>
               <el-descriptions-item :label="t('report.gasCost')">{{ costReport.gas_cost != null ? `¥${costReport.gas_cost.toFixed(2)}` : '-' }}</el-descriptions-item>
@@ -99,7 +102,7 @@ onMounted(async () => {
 
         <el-tab-pane :label="t('report.carbonAnalysis')" name="carbon">
           <template v-if="carbonReport">
-            <el-descriptions :column="2" border class="summary-desc">
+            <el-descriptions :column="isMobile ? 1 : 2" border class="summary-desc">
               <el-descriptions-item :label="t('report.totalCarbon')">{{ carbonReport.total_carbon.toFixed(1) }} kgCO₂</el-descriptions-item>
               <el-descriptions-item :label="t('report.carbonFactor')">{{ carbonReport.carbon_factor }} kgCO₂/kWh</el-descriptions-item>
             </el-descriptions>
@@ -134,5 +137,16 @@ h1 {
 
 .summary-desc {
   margin-bottom: 20px;
+}
+
+@media (max-width: 768px) {
+  h1 {
+    font-size: 18px;
+    margin-bottom: 16px;
+  }
+
+  .summary-cards :deep(.el-statistic) {
+    padding: 12px;
+  }
 }
 </style>

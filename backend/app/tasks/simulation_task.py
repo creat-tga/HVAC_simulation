@@ -26,12 +26,13 @@ log = logging.getLogger(__name__)
 
 SYSTEM_MODEL_MAP = {
     "efficient_chiller_plant": ChillerSystem,
-    "chiller": ChillerSystem,
-    "air_cooled": AirCooledSystem,
     "air_cooled_system": AirCooledSystem,
     "free_cooling": FreeCoolingSystem,
-    "gshp": GSHPSystem,
     "gshp_system": GSHPSystem,
+    # Legacy aliases for backward compatibility with existing DB records
+    "chiller": ChillerSystem,
+    "air_cooled": AirCooledSystem,
+    "gshp": GSHPSystem,
 }
 
 _ep_runner = EnergyPlusRunner()

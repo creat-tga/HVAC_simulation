@@ -8,6 +8,9 @@ import type { Building, BuildingUpdate, BuildingZone, ParamConfig, DaySchedule, 
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Edit, Plus, Delete, ArrowDown, CopyDocument, FolderAdd } from '@element-plus/icons-vue'
 import { ZONE_PRESETS, PRESET_KEYS } from '@/data/zone-presets'
+import { useResponsive } from '@/composables/useResponsive'
+
+const { isMobile } = useResponsive()
 
 const route = useRoute()
 const router = useRouter()
@@ -640,14 +643,18 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
         <div class="zone-table-header">
           <span class="zone-table-title">{{ t('building.zone.title') }} ({{ editZones.length }})</span>
           <div class="zone-table-actions">
-            <el-button type="primary" :icon="Plus" size="small" @click="addZone">{{ t('building.zone.add') }}</el-button>
-            <el-button :icon="FolderAdd" size="small" @click="batchAddVisible = true">{{ t('building.zone.batchAdd') }}</el-button>
+            <el-button type="primary" :icon="Plus" size="small" @click="addZone">
+              <span v-if="!isMobile">{{ t('building.zone.add') }}</span>
+            </el-button>
+            <el-button :icon="FolderAdd" size="small" @click="batchAddVisible = true">
+              <span v-if="!isMobile">{{ t('building.zone.batchAdd') }}</span>
+            </el-button>
             <el-button :icon="CopyDocument" size="small" :disabled="selectedRows.length === 0" @click="batchCopy">
-              {{ t('building.zone.batchCopy') }}
+              <span v-if="!isMobile">{{ t('building.zone.batchCopy') }}</span>
             </el-button>
             <el-button type="danger" :icon="Delete" size="small" plain
               :disabled="selectedRows.length === 0" @click="batchDelete">
-              {{ t('building.zone.batchDelete') }}
+              <span v-if="!isMobile">{{ t('building.zone.batchDelete') }}</span>
             </el-button>
           </div>
         </div>
@@ -657,26 +664,27 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
         @selection-change="handleSelectionChange"
         @row-click="handleRowClick"
         :row-class-name="({row}: {row: BuildingZone, rowIndex: number}) => editZones.indexOf(row) === selectedZoneIdx ? 'current-zone-row' : ''">
-        <el-table-column type="selection" width="40" />
-        <el-table-column label="#" width="40">
+        <el-table-column type="selection" :width="isMobile ? 32 : 40" />
+        <el-table-column label="#" :width="isMobile ? 32 : 40">
           <template #default="{ $index }">{{ (currentPage - 1) * pageSize + $index + 1 }}</template>
         </el-table-column>
         <el-table-column :label="t('building.zone.name')" min-width="100">
           <template #default="{ row }">
             <el-input v-model="row.name" size="small" :placeholder="t('building.zone.pleaseInputName')" />
+            <span v-if="isMobile" class="mobile-zone-area">{{ row.area }} m²</span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.zone.area')" width="110">
+        <el-table-column v-if="!isMobile" :label="t('building.zone.area')" width="110">
           <template #default="{ row }">
             <el-input-number v-model="row.area" :min="0.1" :max="9999.9" :precision="1" size="small" :controls="false" style="width: 100%" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.zone.floorHeight')" width="90">
+        <el-table-column v-if="!isMobile" :label="t('building.zone.floorHeight')" width="90">
           <template #default="{ row }">
             <el-input-number v-model="row.floor_height" :min="1" :max="100" :precision="1" size="small" :controls="false" style="width: 100%" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.envelope.zonePosition')" min-width="120">
+        <el-table-column v-if="!isMobile" :label="t('building.envelope.zonePosition')" min-width="120">
           <template #default="{ row }">
             <el-select v-model="row.zone_position" size="small" style="width: 100%">
               <el-option value="single" :label="t('building.envelope.position.single')" />
@@ -686,30 +694,32 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.envelope.wallU')" width="90">
+        <el-table-column v-if="!isMobile" :label="t('building.envelope.wallU')" width="90">
           <template #default="{ row }">
             <el-input-number v-model="row.wall_u_value" :min="0.01" :max="20" :precision="2" size="small" :controls="false" style="width: 100%" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.envelope.windowU')" width="90">
+        <el-table-column v-if="!isMobile" :label="t('building.envelope.windowU')" width="90">
           <template #default="{ row }">
             <el-input-number v-model="row.window_u_value" :min="0.1" :max="20" :precision="2" size="small" :controls="false" style="width: 100%" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.envelope.wwr')" width="70">
+        <el-table-column v-if="!isMobile" :label="t('building.envelope.wwr')" width="70">
           <template #default="{ row }">
             <el-input-number v-model="row.window_wall_ratio" :min="0" :max="1" :precision="2" size="small" :controls="false" style="width: 100%" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('building.envelope.roofU')" width="90">
+        <el-table-column v-if="!isMobile" :label="t('building.envelope.roofU')" width="90">
           <template #default="{ row }">
             <el-input-number v-model="row.roof_u_value" :min="0.01" :max="20" :precision="2" size="small" :controls="false" style="width: 100%" />
           </template>
         </el-table-column>
-        <el-table-column :label="t('common.operation')" width="100" fixed="right">
+        <el-table-column :label="t('common.operation')" :width="isMobile ? 100 : 100" :fixed="isMobile ? false : 'right'">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click.stop="copyZone(row)">{{ t('building.zone.copy') }}</el-button>
-            <el-button link type="danger" size="small" @click.stop="removeZone(row)" :disabled="editZones.length <= 1">{{ t('building.zone.delete') }}</el-button>
+            <div :class="isMobile ? 'mobile-ops' : ''">
+              <el-button link type="primary" size="small" @click.stop="copyZone(row)">{{ t('building.zone.copy') }}</el-button>
+              <el-button link type="danger" size="small" @click.stop="removeZone(row)" :disabled="editZones.length <= 1">{{ t('building.zone.delete') }}</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -1213,7 +1223,78 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
   .zone-bar { flex-direction: column; align-items: stretch; }
   .zone-selector { width: 100%; }
   .param-header { flex-direction: column; align-items: flex-start; }
-  .schedule-group-top { flex-direction: column; align-items: flex-start; }
-  .schedule-line { flex-direction: column; align-items: flex-start; }
+  .schedule-group-top { flex-direction: column; align-items: flex-start; gap: 6px; }
+
+  .schedule-line {
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .schedule-line .schedule-sub-label {
+    width: 100%;
+    margin-bottom: 2px;
+  }
+
+  .schedule-line .el-select {
+    width: 70px !important;
+  }
+
+  .schedule-sep {
+    margin: 0;
+  }
+
+  .hour-cell {
+    width: 28px;
+    height: 26px;
+    font-size: 11px;
+  }
+
+  .hours-quick .el-button {
+    padding: 2px 4px;
+    font-size: 12px;
+  }
+
+  .day-checkboxes :deep(.el-checkbox-button__inner) {
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+
+  .zone-table-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .zone-table-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .zone-table-actions .el-button {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .mobile-zone-area {
+    display: block;
+    font-size: 11px;
+    color: #94a3b8;
+    margin-top: 2px;
+  }
+
+  .mobile-ops {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    align-items: flex-start;
+  }
+
+  .mobile-ops .el-button {
+    margin-left: 0 !important;
+    padding: 2px 0;
+  }
 }
 </style>

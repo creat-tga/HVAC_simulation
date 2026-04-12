@@ -7,6 +7,7 @@ import { useSimulationStore } from '@/stores/simulation'
 import { createHVACSystem, deleteHVACSystem, updateHVACSystem } from '@/api/simulation'
 import type { HVACSystemCreate, HVACSystem } from '@/types/simulation'
 import SystemConfig from '@/components/simulation/SystemConfig.vue'
+import StepNav from '@/components/layout/StepNav.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const { t } = useI18n()
@@ -115,16 +116,13 @@ function goBack() {
     </el-card>
 
     <!-- Navigation -->
-    <div class="nav-buttons">
-      <el-button @click="goBack">← {{ t('simulation.steps.loadSimulation') }}</el-button>
-      <el-button
-        type="primary"
-        :disabled="!store.systemConfigured"
-        @click="goToSimulation"
-      >
-        {{ t('simulation.steps.energySimulation') }} →
-      </el-button>
-    </div>
+    <StepNav
+      :prev-label="t('simulation.steps.loadSimulation')"
+      :next-label="t('simulation.steps.energySimulation')"
+      :next-disabled="!store.systemConfigured"
+      @prev="goBack"
+      @next="goToSimulation"
+    />
 
     <el-dialog v-model="systemDialogVisible" :title="dialogTitle" width="700px">
       <SystemConfig
@@ -180,9 +178,19 @@ function goBack() {
   color: #1e293b;
 }
 
-.nav-buttons {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 24px;
+@media (max-width: 768px) {
+  .page-header h1 {
+    font-size: 18px;
+  }
+
+  .load-reference {
+    flex-direction: column;
+  }
+
+  .section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
 }
 </style>

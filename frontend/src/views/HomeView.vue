@@ -777,4 +777,31 @@ function openProject(id: string) {
 .tier-tou-section .hour-coverage-hint {
   margin-left: 0;
 }
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .page-header h1 {
+    font-size: 18px;
+  }
+
+  .filter-bar {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .filter-bar .el-input,
+  .filter-bar .el-select {
+    width: 100% !important;
+  }
+
+  .project-card {
+    height: auto;
+    min-height: 140px;
+  }
+}
 </style>

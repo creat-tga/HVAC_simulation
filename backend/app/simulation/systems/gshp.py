@@ -12,7 +12,7 @@ class GSHPSystem(HVACSystemModel):
 
     @property
     def system_type(self) -> str:
-        return "gshp"
+        return "gshp_system"
 
     def simulate(self, input_data: SimulationInput) -> SimulationOutput:
         cooling_cop = self.spec.cop or 5.5

@@ -23,33 +23,39 @@ const router = createRouter({
     },
     {
       path: '/projects/:projectId/buildings/:buildingId',
-      name: 'building',
-      component: () => import('@/views/BuildingView.vue'),
-      meta: { title: '建筑配置' },
-    },
-    {
-      path: '/projects/:projectId/buildings/:buildingId/load',
-      name: 'loadCalc',
-      component: () => import('@/views/LoadCalcView.vue'),
-      meta: { title: '负荷与气象' },
-    },
-    {
-      path: '/projects/:projectId/buildings/:buildingId/system',
-      name: 'systemSelect',
-      component: () => import('@/views/SystemSelectView.vue'),
-      meta: { title: '系统选型' },
-    },
-    {
-      path: '/projects/:projectId/buildings/:buildingId/simulation',
-      name: 'simulation',
-      component: () => import('@/views/SimulationView.vue'),
-      meta: { title: '仿真模拟' },
-    },
-    {
-      path: '/projects/:projectId/buildings/:buildingId/report/:resultId',
-      name: 'report',
-      component: () => import('@/views/ReportView.vue'),
-      meta: { title: '报表分析' },
+      component: () => import('@/components/layout/BuildingLayout.vue'),
+      children: [
+        {
+          path: '',
+          name: 'building',
+          component: () => import('@/views/BuildingView.vue'),
+          meta: { title: '建筑配置' },
+        },
+        {
+          path: 'load',
+          name: 'loadCalc',
+          component: () => import('@/views/LoadCalcView.vue'),
+          meta: { title: '负荷与气象' },
+        },
+        {
+          path: 'system',
+          name: 'systemSelect',
+          component: () => import('@/views/SystemSelectView.vue'),
+          meta: { title: '系统选型' },
+        },
+        {
+          path: 'simulation',
+          name: 'simulation',
+          component: () => import('@/views/SimulationView.vue'),
+          meta: { title: '仿真模拟' },
+        },
+        {
+          path: 'report/:resultId',
+          name: 'report',
+          component: () => import('@/views/ReportView.vue'),
+          meta: { title: '报表分析' },
+        },
+      ],
     },
   ],
 })

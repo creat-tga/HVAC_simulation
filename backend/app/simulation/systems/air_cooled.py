@@ -12,7 +12,7 @@ class AirCooledSystem(HVACSystemModel):
 
     @property
     def system_type(self) -> str:
-        return "air_cooled"
+        return "air_cooled_system"
 
     def simulate(self, input_data: SimulationInput) -> SimulationOutput:
         cooling_cop = self.spec.cop or 3.2

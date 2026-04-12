@@ -8,6 +8,7 @@ import { useTaskTrackerStore } from '@/stores/taskTracker'
 import { runEnergySimulation, cancelSimulation, getSimulationStatus } from '@/api/simulation'
 import { useSimulationWs } from '@/composables/useSimulationWs'
 import SimulationProgress from '@/components/simulation/SimulationProgress.vue'
+import StepNav from '@/components/layout/StepNav.vue'
 import { ElMessage } from 'element-plus'
 
 const { t } = useI18n()
@@ -283,9 +284,10 @@ function goToLoadCalc() {
     </el-card>
 
     <!-- Navigation -->
-    <div class="nav-buttons">
-      <el-button @click="goBack">&larr; {{ t('simulation.steps.systemConfig') }}</el-button>
-    </div>
+    <StepNav
+      :prev-label="t('simulation.steps.systemConfig')"
+      @prev="goBack"
+    />
   </div>
 </template>
 
@@ -338,9 +340,17 @@ function goToLoadCalc() {
   color: #1e293b;
 }
 
-.nav-buttons {
-  display: flex;
-  justify-content: flex-start;
-  margin-top: 24px;
+@media (max-width: 768px) {
+  .page-header h1 {
+    font-size: 18px;
+  }
+
+  .load-reference {
+    flex-direction: column;
+  }
+
+  .run-action {
+    margin: 12px 0;
+  }
 }
 </style>

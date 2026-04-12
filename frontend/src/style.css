@@ -12,6 +12,13 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   color: #1e293b;
+  background: #f1f5f9;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+html {
+  background: #f1f5f9;
 }
 
 /* Custom scrollbar */
@@ -89,4 +96,61 @@ body {
   --el-color-primary-light-8: #cffafe;
   --el-color-primary-light-9: #ecfeff;
   --el-color-primary-dark-2: #0e7490;
+}
+
+/* ── Mobile responsive ── */
+@media (max-width: 768px) {
+  .el-dialog {
+    width: 95% !important;
+    margin: 8vh auto !important;
+  }
+
+  .el-table {
+    font-size: 13px;
+  }
+
+  .el-form-item__label {
+    font-size: 13px;
+  }
+
+  /* Prevent iOS zoom on input focus (font-size < 16px triggers zoom) */
+  input, select, textarea, .el-input__inner, .el-textarea__inner {
+    font-size: 16px !important;
+  }
+
+  /* Touch-friendly: larger tap targets */
+  .el-button {
+    min-height: 36px;
+  }
+
+  .el-button--small {
+    min-height: 32px;
+    padding: 6px 12px;
+  }
+
+  /* Wrap tables in horizontal scroll on mobile */
+  .el-table {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Drawer overlay fix */
+  .el-drawer__wrapper {
+    z-index: 2000 !important;
+  }
+
+  /* Hide scrollbar on mobile — use touch scrolling */
+  * {
+    scrollbar-width: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Safe area padding for notch devices */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .app-layout {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }

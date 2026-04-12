@@ -192,4 +192,16 @@ async function handleLogin() {
 .login-card :deep(.el-button--primary:hover) {
   background: linear-gradient(135deg, #22d3ee, #0891b2);
 }
+
+@media (max-width: 768px) {
+  .login-card {
+    width: 92%;
+    max-width: 420px;
+    padding: 28px 20px;
+  }
+
+  .login-header h1 {
+    font-size: 22px;
+  }
+}
 </style>

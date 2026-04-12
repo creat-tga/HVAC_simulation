@@ -30,12 +30,13 @@ _running_tasks: dict[str, asyncio.Task] = {}
 
 SYSTEM_MODEL_MAP = {
     "efficient_chiller_plant": ChillerSystem,
-    "chiller": ChillerSystem,
-    "air_cooled": AirCooledSystem,
     "air_cooled_system": AirCooledSystem,
     "free_cooling": FreeCoolingSystem,
-    "gshp": GSHPSystem,
     "gshp_system": GSHPSystem,
+    # Legacy aliases for backward compatibility with existing DB records
+    "chiller": ChillerSystem,
+    "air_cooled": AirCooledSystem,
+    "gshp": GSHPSystem,
 }
 
 
@@ -327,6 +328,13 @@ async def create_energy_simulation(
 
     result_id = str(sim_result.id)
 
+    # Fetch electricity price from project
+    project = await db.get(Project, building.project_id)
+    electricity_price = 0.85  # default
+    if project and project.electricity_pricing:
+        ep = project.electricity_pricing
+        electricity_price = ep.get("fixed_price", 0.85)
+
     # Snapshot data for background
     cooling = load_result.hourly_cooling_load or []
     heating = load_result.hourly_heating_load or []
@@ -348,7 +356,7 @@ async def create_energy_simulation(
         log.info("Energy simulation %s dispatched via Celery (load ref: %s)", sim_result.id, load_result_id)
     else:
         task = asyncio.create_task(
-            _run_energy_background(result_id, cooling, heating, systems_data)
+            _run_energy_background(result_id, cooling, heating, systems_data, electricity_price)
         )
         _running_tasks[result_id] = task
         log.info("Energy simulation %s dispatched as in-process task (load ref: %s)", sim_result.id, load_result_id)
@@ -444,6 +452,7 @@ async def _run_energy_background(
     hourly_cooling: list[float],
     hourly_heating: list[float],
     systems_data: list[dict],
+    electricity_price: float = 0.85,
 ) -> None:
     """Background coroutine: run energy simulation using load results + system models."""
     try:
@@ -455,6 +464,7 @@ async def _run_energy_background(
             sim_input = SimulationInput(
                 hourly_cooling_load=hourly_cooling,
                 hourly_heating_load=hourly_heating,
+                electricity_price=electricity_price,
             )
 
             total_energy = 0.0
@@ -469,6 +479,7 @@ async def _run_energy_background(
                     continue
 
                 spec = SystemSpec(
+                    name=sys_info.get("name", f"System-{i+1}"),
                     capacity=sys_info.get("capacity") or 100.0,
                     cop=sys_info.get("cop") or 4.0,
                     parameters=sys_info.get("parameters") or {},

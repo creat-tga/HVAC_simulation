@@ -12,6 +12,9 @@ import type { SimulationResult } from '@/types/simulation'
 import type { Project } from '@/types/project'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getClimateZone } from '@/data/regions'
+import { useResponsive } from '@/composables/useResponsive'
+
+const { isMobile } = useResponsive()
 
 const route = useRoute()
 const router = useRouter()
@@ -161,7 +164,60 @@ async function handleRunAllLoads() {
       </div>
     </div>
 
-    <el-table :data="store.buildings" v-loading="store.loading" stripe>
+    <!-- Mobile: Card Layout -->
+    <div v-if="isMobile" class="building-cards">
+      <el-card
+        v-for="row in store.buildings"
+        :key="row.id"
+        class="building-card"
+        shadow="hover"
+        @click="openBuilding(row.id)"
+      >
+        <div class="building-card-header">
+          <span class="building-name">{{ row.name }}</span>
+          <div class="building-tags">
+            <el-tag v-if="row.building_type" size="small" type="info">
+              {{ t(`building.types.${row.building_type}`) }}
+            </el-tag>
+            <el-tag v-if="row.climate_zone" size="small" type="warning">
+              {{ t(`building.climateZones.${row.climate_zone}`) }}
+            </el-tag>
+          </div>
+        </div>
+        <div v-if="simMap[row.id]" class="building-card-sim">
+          <div class="sim-item">
+            <span class="sim-label">{{ t('building.peakCooling') }}</span>
+            <span class="sim-value">{{ formatNum(simMap[row.id]?.peak_cooling_load) }}</span>
+          </div>
+          <div class="sim-item">
+            <span class="sim-label">{{ t('building.peakHeating') }}</span>
+            <span class="sim-value">{{ formatNum(simMap[row.id]?.peak_heating_load) }}</span>
+          </div>
+        </div>
+        <div class="building-card-actions" @click.stop>
+          <el-button
+            size="small"
+            :icon="VideoPlay"
+            :loading="runningBuildings.has(row.id)"
+            @click.stop="handleRunLoad(row)"
+          >
+            {{ t('building.runLoad') }}
+          </el-button>
+          <el-button
+            type="danger"
+            size="small"
+            text
+            :icon="Delete"
+            @click.stop="handleDeleteBuilding(row.id)"
+          >
+            {{ t('common.delete') }}
+          </el-button>
+        </div>
+      </el-card>
+    </div>
+
+    <!-- Desktop: Table Layout -->
+    <el-table v-else :data="store.buildings" v-loading="store.loading" stripe>
       <el-table-column prop="name" :label="t('building.name')" min-width="120" show-overflow-tooltip />
       <el-table-column :label="t('building.type')" width="120">
         <template #default="{ row }">
@@ -269,5 +325,98 @@ async function handleRunAllLoads() {
   font-size: 18px;
   font-weight: 600;
   color: #1e293b;
+}
+
+@media (max-width: 768px) {
+  .page-header h1 {
+    font-size: 18px;
+  }
+
+  .section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .section-header > div {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .section-header > div .el-button {
+    flex: 1;
+  }
+
+  .section-header h2 {
+    font-size: 16px;
+  }
+
+  .building-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .building-card {
+    cursor: pointer;
+  }
+
+  .building-card :deep(.el-card__body) {
+    padding: 14px;
+  }
+
+  .building-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+
+  .building-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1e293b;
+    flex: 1;
+    margin-right: 8px;
+  }
+
+  .building-tags {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .building-card-sim {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 12px;
+    padding: 8px 0;
+    border-top: 1px solid #f0f0f0;
+  }
+
+  .sim-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .sim-label {
+    font-size: 12px;
+    color: #94a3b8;
+  }
+
+  .sim-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: #334155;
+  }
+
+  .building-card-actions {
+    display: flex;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid #f0f0f0;
+  }
 }
 </style>
