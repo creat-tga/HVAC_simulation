@@ -7,6 +7,7 @@
 - Node.js >= 18
 - pnpm
 - `uv` (项目中用于管理后端依赖与运行，本项目文档中使用 `uv` 命令)
+- Redis（可选，用于 Celery 异步任务队列）
 
 建议在系统上安装 Git、Python、Node 与 pnpm，并在虚拟环境中运行后端。
 
@@ -41,6 +42,138 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```bash
 cd backend
 uv run pytest
+```
+
+---
+
+## Redis & Celery（可选）
+
+项目支持两种仿真任务执行模式：
+- **In-process 模式**（默认）：无需 Redis/Celery，仿真任务在 FastAPI 进程内以 asyncio 后台协程运行。适用于开发和单用户场景。
+- **Celery 模式**：通过 Redis + Celery worker 将仿真任务分发到独立进程执行。适用于多用户并发、生产部署场景。
+
+系统会自动检测 Redis 是否可用以及 Celery worker 是否在线，如果没有启动则自动回退到 in-process 模式，无需手动切换。
+
+### 启动 Redis
+
+**Windows（使用 Docker）**：
+```bash
+docker run -d --name redis -p 6379:6379 redis:latest
+```
+
+**Linux / macOS**：
+```bash
+# Ubuntu/Debian
+sudo apt install redis-server
+sudo systemctl start redis
+
+# macOS (Homebrew)
+brew install redis
+brew services start redis
+```
+
+验证 Redis 是否运行：
+```bash
+redis-cli ping
+# 应返回 PONG
+```
+
+### 启动 Celery Worker
+
+Redis 启动后，在单独的终端中运行 Celery worker：
+
+**Windows**：
+```bash
+cd backend
+uv run celery -A app.celery_app:celery_app worker --loglevel=info --pool=solo
+```
+
+> Windows 上必须使用 `--pool=solo`，因为 Windows 不支持 Celery 默认的 prefork 进程池。
+
+**Linux / macOS**：
+```bash
+cd backend
+uv run celery -A app.celery_app:celery_app worker --loglevel=info
+```
+
+Linux/macOS 默认使用 `prefork` 进程池，支持多进程并行处理任务。可通过 `--concurrency` 参数指定 worker 数量：
+
+```bash
+# 使用 4 个 worker 进程
+uv run celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=4
+```
+
+也可以使用 `systemd` 将 Celery worker 注册为系统服务（生产部署推荐）：
+
+```ini
+# /etc/systemd/system/hvac-celery.service
+[Unit]
+Description=HVAC Simulation Celery Worker
+After=redis.service
+
+[Service]
+Type=forking
+User=www-data
+WorkingDirectory=/path/to/backend
+ExecStart=/path/to/uv run celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=4
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable hvac-celery
+sudo systemctl start hvac-celery
+```
+
+### 完整的开发环境启动顺序
+
+**Windows**：
+```bash
+# 终端 1：Redis（如使用 Docker）
+docker run -d --name redis -p 6379:6379 redis:latest
+
+# 终端 2：Celery Worker
+cd backend
+uv run celery -A app.celery_app:celery_app worker --loglevel=info --pool=solo
+
+# 终端 3：FastAPI 后端
+cd backend
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+# 终端 4：Vue 前端
+cd frontend
+pnpm run dev
+```
+
+**Linux / macOS**：
+```bash
+# 终端 1：Redis
+sudo systemctl start redis  # 或 docker run -d --name redis -p 6379:6379 redis:latest
+
+# 终端 2：Celery Worker
+cd backend
+uv run celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=4
+
+# 终端 3：FastAPI 后端
+cd backend
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+# 终端 4：Vue 前端
+cd frontend
+pnpm run dev
+```
+
+### 环境变量配置
+
+在 `backend/.env` 中可配置 Redis 连接地址（默认为 `redis://localhost:6379/0`）：
+
+```env
+REDIS_URL=redis://localhost:6379/0
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
 ```
 
 ---

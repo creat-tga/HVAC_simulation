@@ -10,14 +10,14 @@ from app.database import SyncSession
 from app.models.building import Building
 from app.models.project import Project
 from app.models.simulation import HVACSystem, SimulationResult
-from app.schemas.simulation import HVACSystemCreate, HVACSystemUpdate, SimulationCreate
+from app.schemas.simulation import HVACSystemCreate, HVACSystemUpdate
 from app.simulation.energyplus.runner import EnergyPlusRunner
 from app.simulation.systems.base import SystemSpec, SimulationInput
 from app.simulation.systems.chiller import ChillerSystem
 from app.simulation.systems.air_cooled import AirCooledSystem
 from app.simulation.systems.free_cooling import FreeCoolingSystem
 from app.simulation.systems.gshp import GSHPSystem
-from app.utils.redis_check import is_redis_available
+from app.utils.redis_check import is_redis_available, is_celery_worker_available
 
 log = logging.getLogger(__name__)
 
@@ -82,25 +82,6 @@ async def delete_hvac_system(db: AsyncSession, system_id: uuid.UUID) -> bool:
     return True
 
 
-async def _generate_loads(
-    location: list[str],
-    zones: list[dict] | None,
-) -> tuple[list[float], list[float]]:
-    """Generate hourly loads via EnergyPlus; returns (cooling, heating)."""
-    if not _ep_runner.is_available():
-        raise RuntimeError("EnergyPlus is not installed or not configured")
-    if not zones:
-        raise ValueError("Building zones are required for EnergyPlus simulation")
-
-    zones_dict = {z.get("id", str(i)): z for i, z in enumerate(zones)}
-    log.info("Running EnergyPlus load simulation (%d zones, %s)", len(zones), location)
-    cooling, heating = await _ep_runner.run_load_simulation(
-        zones_dict, location
-    )
-    log.info("EnergyPlus completed successfully")
-    return cooling, heating
-
-
 def _parse_location(loc_str: str | None) -> list[str]:
     """Parse location string (e.g. "广东-广州") into [province, city]."""
     if not loc_str:
@@ -116,44 +97,6 @@ async def _get_building_location(db: AsyncSession, building: Building) -> list[s
     project = await db.get(Project, building.project_id)
     project_loc = project.location if project else None
     return _parse_location(project_loc or building.location)
-
-
-# Load Preview (calculate only, no save)
-async def preview_building_load(
-    db: AsyncSession, building_id: uuid.UUID
-) -> dict | None:
-    """Generate hourly loads for a building without saving to DB."""
-    building = await db.get(Building, building_id)
-    if not building:
-        return None
-
-    zones = building.zones
-    location = await _get_building_location(db, building)
-
-    hourly_cooling, hourly_heating = await _generate_loads(location, zones)
-
-    return {
-        "hourly_cooling_load": hourly_cooling,
-        "hourly_heating_load": hourly_heating,
-        "total_cooling_load": round(sum(hourly_cooling), 2),
-        "total_heating_load": round(sum(hourly_heating), 2),
-        "peak_cooling_load": round(max(hourly_cooling), 2) if hourly_cooling else 0.0,
-        "peak_heating_load": round(max(hourly_heating), 2) if hourly_heating else 0.0,
-    }
-
-
-# Simulation
-
-async def clear_simulation_results(
-    db: AsyncSession, building_id: uuid.UUID, simulation_type: str | None = None,
-) -> int:
-    """Delete simulation results for a building. Returns number of deleted rows."""
-    stmt = delete(SimulationResult).where(SimulationResult.building_id == building_id)
-    if simulation_type:
-        stmt = stmt.where(SimulationResult.simulation_type == simulation_type)
-    result = await db.execute(stmt)
-    await db.commit()
-    return result.rowcount  # type: ignore[return-value]
 
 
 async def get_simulation_results(
@@ -185,54 +128,6 @@ async def get_simulation_result(
     db: AsyncSession, result_id: uuid.UUID
 ) -> SimulationResult | None:
     return await db.get(SimulationResult, result_id)
-
-
-async def create_simulation(
-    db: AsyncSession, building_id: uuid.UUID, data: SimulationCreate
-) -> SimulationResult:
-    """Create a pending SimulationResult and run in-process background task."""
-    building = await db.get(Building, building_id)
-    if not building:
-        raise ValueError("建筑不存在")
-
-    if not building.zones:
-        raise ValueError("建筑未配置热区，无法运行仿真")
-
-    if not _ep_runner.is_available():
-        raise RuntimeError("EnergyPlus is not installed or not configured")
-
-    sim_result = SimulationResult(
-        building_id=building_id,
-        simulation_type=data.simulation_type,
-        status="pending",
-        progress=0,
-    )
-    db.add(sim_result)
-    await db.commit()
-    await db.refresh(sim_result)
-
-    result_id = str(sim_result.id)
-    task_id = str(uuid.uuid4())
-    sim_result.task_id = task_id
-    await db.commit()
-    await db.refresh(sim_result)
-
-    # Prepare data snapshot for background task (DB session will be closed)
-    zones_dict = {z.get("id", str(i)): z for i, z in enumerate(building.zones)}
-    location = await _get_building_location(db, building)
-
-    if is_redis_available():
-        from app.tasks.simulation_task import run_simulation_task
-        run_simulation_task.delay(result_id, str(building_id))
-        log.info("Simulation %s dispatched via Celery (task %s)", sim_result.id, task_id)
-    else:
-        task = asyncio.create_task(
-            _run_load_background(result_id, zones_dict, location)
-        )
-        _running_tasks[result_id] = task
-        log.info("Simulation %s dispatched as in-process task (Redis unavailable)", sim_result.id)
-
-    return sim_result
 
 
 async def create_load_simulation(
@@ -271,8 +166,8 @@ async def create_load_simulation(
     zones_dict = {z.get("id", str(i)): z for i, z in enumerate(building.zones)}
     location = await _get_building_location(db, building)
 
-    if is_redis_available():
-        # Dispatch via Celery when Redis is available
+    if is_redis_available() and is_celery_worker_available():
+        # Dispatch via Celery when Redis and worker are available
         from app.tasks.simulation_task import run_load_simulation_task
         run_load_simulation_task.delay(result_id, str(building_id))
         log.info("Load simulation %s dispatched via Celery", sim_result.id)
@@ -282,7 +177,10 @@ async def create_load_simulation(
             _run_load_background(result_id, zones_dict, location)
         )
         _running_tasks[result_id] = task
-        log.info("Load simulation %s dispatched as in-process task (Redis unavailable)", sim_result.id)
+        if is_redis_available():
+            log.info("Load simulation %s dispatched as in-process task (Redis available but no Celery worker)", sim_result.id)
+        else:
+            log.info("Load simulation %s dispatched as in-process task (Redis unavailable)", sim_result.id)
 
     return sim_result
 
@@ -350,7 +248,7 @@ async def create_energy_simulation(
         for s in hvac_systems
     ]
 
-    if is_redis_available():
+    if is_redis_available() and is_celery_worker_available():
         from app.tasks.simulation_task import run_energy_simulation_task
         run_energy_simulation_task.delay(result_id, str(building_id), str(load_result_id))
         log.info("Energy simulation %s dispatched via Celery (load ref: %s)", sim_result.id, load_result_id)
@@ -359,7 +257,10 @@ async def create_energy_simulation(
             _run_energy_background(result_id, cooling, heating, systems_data, electricity_price)
         )
         _running_tasks[result_id] = task
-        log.info("Energy simulation %s dispatched as in-process task (load ref: %s)", sim_result.id, load_result_id)
+        if is_redis_available():
+            log.info("Energy simulation %s dispatched as in-process task, no Celery worker (load ref: %s)", sim_result.id, load_result_id)
+        else:
+            log.info("Energy simulation %s dispatched as in-process task (load ref: %s)", sim_result.id, load_result_id)
 
     return sim_result
 

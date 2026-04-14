@@ -42,7 +42,12 @@ async def _send_current_state(websocket: WebSocket, result_id: uuid.UUID) -> str
 
 
 async def _ws_redis_pubsub(websocket: WebSocket, result_id: uuid.UUID) -> None:
-    """Listen on Redis pub/sub channel and forward messages to WebSocket."""
+    """Listen on Redis pub/sub channel with DB polling fallback.
+
+    Combines pubsub for instant updates with periodic DB checks to handle
+    cases where pubsub messages are missed or the Celery worker updates
+    only the database.
+    """
     import redis.asyncio as aioredis
 
     r = aioredis.from_url(settings.redis_url, decode_responses=True)
@@ -50,12 +55,20 @@ async def _ws_redis_pubsub(websocket: WebSocket, result_id: uuid.UUID) -> None:
     channel = f"simulation:{result_id}"
     await pubsub.subscribe(channel)
 
+    last_db_progress = -1
+    last_db_status = ""
+
     try:
         while True:
-            message = await asyncio.wait_for(
-                pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0),
-                timeout=30.0,
-            )
+            # Try pubsub with a short timeout
+            try:
+                message = await asyncio.wait_for(
+                    pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0),
+                    timeout=3.0,
+                )
+            except asyncio.TimeoutError:
+                message = None
+
             if message and message["type"] == "message":
                 data = message["data"]
                 if isinstance(data, str):
@@ -66,6 +79,25 @@ async def _ws_redis_pubsub(websocket: WebSocket, result_id: uuid.UUID) -> None:
 
                 if parsed.get("status") in ("completed", "failed", "cancelled"):
                     break
+            else:
+                # Fallback: poll DB for progress
+                async with async_session() as db:
+                    result = await db.get(SimulationResult, result_id)
+                    if not result:
+                        break
+
+                    if result.progress != last_db_progress or result.status != last_db_status:
+                        last_db_progress = result.progress
+                        last_db_status = result.status
+                        await websocket.send_json({
+                            "id": str(result.id),
+                            "status": result.status,
+                            "progress": result.progress,
+                            "message": "",
+                        })
+
+                    if result.status in ("completed", "failed", "cancelled"):
+                        break
     finally:
         await pubsub.unsubscribe(channel)
         await pubsub.close()

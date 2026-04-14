@@ -5,15 +5,8 @@ import type {
   HVACSystemUpdate,
   SimulationResult,
   SimulationDetail,
-  SimulationCreate,
   SimulationStatus,
-  LoadPreview,
 } from '@/types/simulation'
-
-// Load Preview (legacy sync)
-export function previewLoad(buildingId: string) {
-  return api.post<LoadPreview>(`/buildings/${buildingId}/load-preview`)
-}
 
 // Load Simulation (background task)
 export function runLoadSimulation(buildingId: string) {
@@ -45,14 +38,10 @@ export function deleteHVACSystem(buildingId: string, systemId: string) {
   return api.delete(`/buildings/${buildingId}/systems/${systemId}`)
 }
 
-// Simulations (generic)
+// Simulations
 export function getSimulations(buildingId: string, simulationType?: string) {
   const params = simulationType ? { simulation_type: simulationType } : {}
   return api.get<SimulationResult[]>(`/buildings/${buildingId}/simulations`, { params })
-}
-
-export function runSimulation(buildingId: string, data: SimulationCreate) {
-  return api.post<SimulationResult>(`/buildings/${buildingId}/simulations`, data)
 }
 
 export function getSimulationDetail(buildingId: string, resultId: string) {
@@ -65,11 +54,6 @@ export function getSimulationStatus(buildingId: string, resultId: string) {
 
 export function cancelSimulation(buildingId: string, resultId: string) {
   return api.post<SimulationStatus>(`/buildings/${buildingId}/simulations/${resultId}/cancel`)
-}
-
-export function clearSimulations(buildingId: string, simulationType?: string) {
-  const params = simulationType ? { simulation_type: simulationType } : {}
-  return api.delete(`/buildings/${buildingId}/simulations`, { params })
 }
 
 export function getWeatherData(buildingId: string) {

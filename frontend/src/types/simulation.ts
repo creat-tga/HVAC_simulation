@@ -53,10 +53,6 @@ export interface SimulationDetail extends SimulationResult {
   result_data: Record<string, unknown> | null
 }
 
-export interface SimulationCreate {
-  simulation_type: string
-}
-
 export interface SimulationStatus {
   id: string
   status: string

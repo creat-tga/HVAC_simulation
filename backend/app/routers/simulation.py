@@ -14,7 +14,6 @@ from app.schemas.simulation import (
     SimulationResponse,
     SimulationDetailResponse,
     SimulationStatusResponse,
-    LoadPreviewResponse,
 )
 from app.services import simulation_service
 
@@ -52,18 +51,6 @@ async def get_weather_data(
     import asyncio
     data = await asyncio.to_thread(parse_epw_hourly, epw_path)
     return JSONResponse(content=data)
-
-
-# --- Load Preview (legacy sync) ---
-@router.post("/load-preview", response_model=LoadPreviewResponse)
-async def preview_load(
-    building_id: uuid.UUID, db: AsyncSession = Depends(get_db)
-):
-    """预览建筑负荷（不保存，仅计算）"""
-    result = await simulation_service.preview_building_load(db, building_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="建筑不存在")
-    return result
 
 
 # --- Load Simulation (background task) ---
@@ -157,16 +144,6 @@ async def list_simulations(
     return await simulation_service.get_simulation_results(db, building_id)
 
 
-@router.post("/simulations", response_model=SimulationResponse, status_code=201)
-async def run_simulation(
-    building_id: uuid.UUID,
-    data: SimulationCreate,
-    db: AsyncSession = Depends(get_db),
-):
-    """提交仿真任务（后台运行，立即返回任务ID）"""
-    return await simulation_service.create_simulation(db, building_id, data)
-
-
 @router.get("/simulations/{result_id}", response_model=SimulationDetailResponse)
 async def get_simulation_detail(
     building_id: uuid.UUID,
@@ -210,11 +187,3 @@ async def cancel_simulation(
     return result
 
 
-@router.delete("/simulations", status_code=204)
-async def clear_simulations(
-    building_id: uuid.UUID,
-    simulation_type: str | None = Query(None, description="Filter by type: load, energy"),
-    db: AsyncSession = Depends(get_db),
-):
-    """清除建筑的仿真结果"""
-    await simulation_service.clear_simulation_results(db, building_id, simulation_type)

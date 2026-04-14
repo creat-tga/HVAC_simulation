@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useSimulationStore } from '@/stores/simulation'
 import { useTaskTrackerStore } from '@/stores/taskTracker'
-import { getSimulationStatus, getSimulationDetail, getWeatherData } from '@/api/simulation'
-import { useSimulationWs } from '@/composables/useSimulationWs'
-import SimulationProgress from '@/components/simulation/SimulationProgress.vue'
+import { getSimulationDetail, getWeatherData } from '@/api/simulation'
 import LoadChart from '@/components/charts/LoadChart.vue'
 import WeatherChart from '@/components/charts/WeatherChart.vue'
 import StepNav from '@/components/layout/StepNav.vue'
@@ -31,11 +29,6 @@ const weatherData = ref<{
 const weatherLoading = ref(false)
 const weatherError = ref('')
 
-// Active task tracking
-const activeResultId = ref<string | null>(null)
-const { status: wsStatus, progress: wsProgress, message: wsMessage, connected: wsConnected } =
-  useSimulationWs(activeResultId)
-
 // Completed load result data (for display)
 const completedLoadData = ref<{
   hourly_cooling_load: number[]
@@ -46,119 +39,23 @@ const completedLoadData = ref<{
   peak_heating_load: number
 } | null>(null)
 
-// Polling fallback status
-const pollStatus = ref<string>('pending')
-const pollProgress = ref(0)
-const pollMessage = ref('')
-
-// Polling fallback
-let pollTimer: ReturnType<typeof setInterval> | null = null
-
-function startPolling() {
-  stopPolling()
-  pollTimer = setInterval(async () => {
-    if (!activeResultId.value) return
-    try {
-      const { data } = await getSimulationStatus(buildingId, activeResultId.value)
-      // Always update polling state for progress display
-      pollStatus.value = data.status
-      pollProgress.value = data.progress ?? 0
-      pollMessage.value = data.error_message || ''
-      if (['completed', 'failed', 'cancelled'].includes(data.status)) {
-        await handleTaskComplete(data.status, data.error_message || undefined)
-      }
-    } catch {
-      // ignore poll errors
-    }
-  }, 3000)
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-async function handleTaskComplete(status: string, errorMessage?: string) {
-  if (activeResultId.value) {
-    tracker.updateTask(activeResultId.value, { status, progress: status === 'completed' ? 100 : undefined, errorMessage })
-  }
-  if (status === 'completed' && activeResultId.value) {
-    ElMessage.success(t('simulation.loadCalc.completed'))
-    // Fetch the completed result to get hourly data
-    try {
-      const { data } = await getSimulationDetail(buildingId, activeResultId.value)
-      if (data.hourly_cooling_load && data.hourly_heating_load) {
-        completedLoadData.value = {
-          hourly_cooling_load: data.hourly_cooling_load,
-          hourly_heating_load: data.hourly_heating_load,
-          total_cooling_load: data.total_cooling_load || 0,
-          total_heating_load: data.total_heating_load || 0,
-          peak_cooling_load: data.peak_cooling_load || 0,
-          peak_heating_load: data.peak_heating_load || 0,
-        }
-        // Also set as load preview for downstream use
-        store.setLoadPreview(completedLoadData.value)
-      }
-    } catch {
-      // ignore
-    }
-  } else if (status === 'failed') {
-    ElMessage.error(errorMessage || t('simulation.loadCalc.failed'))
-  } else if (status === 'cancelled') {
-    ElMessage.warning(t('simulation.progress.cancelled'))
-  }
-  stopTracking()
-  store.fetchLoadResults(buildingId)
-}
-
-function stopTracking() {
-  activeResultId.value = null
-  stopPolling()
-}
-
-// Watch WebSocket terminal states
+// Watch taskTracker for completion of load tasks for this building
 watch(
-  () => wsStatus.value,
-  (newStatus) => {
-    if (['completed', 'failed', 'cancelled'].includes(newStatus) && activeResultId.value) {
-      handleTaskComplete(newStatus, wsMessage.value || undefined)
+  () => [...tracker.tasks.values()],
+  async (tasks) => {
+    for (const task of tasks) {
+      if (task.buildingId === buildingId && task.simulationType === 'load' && task.status === 'completed') {
+        ElMessage.success(t('simulation.loadCalc.completed'))
+        await store.fetchLoadResults(buildingId)
+        await loadLatestResult()
+        break
+      }
     }
   },
+  { deep: true },
 )
 
-function goToSystemSelect() {
-  router.push(`/projects/${projectId}/buildings/${buildingId}/system`)
-}
-
-function goBack() {
-  router.push(`/projects/${projectId}/buildings/${buildingId}`)
-}
-
-// Load existing results on mount
-onMounted(async () => {
-  await store.fetchLoadResults(buildingId)
-  // Check for active (pending/running) load simulation
-  const active = store.loadResults.find(r => ['pending', 'running'].includes(r.status))
-  if (active) {
-    activeResultId.value = active.id
-    // Immediate status check before starting polling
-    try {
-      const { data } = await getSimulationStatus(buildingId, active.id)
-      if (['completed', 'failed', 'cancelled'].includes(data.status)) {
-        // Task already finished, don't poll
-        activeResultId.value = null
-        await store.fetchLoadResults(buildingId)
-      } else {
-        startPolling()
-      }
-    } catch {
-      // If status check fails, still try polling
-      startPolling()
-    }
-  }
-  // Load latest completed result
+async function loadLatestResult() {
   const latest = store.latestLoadResult
   if (latest) {
     try {
@@ -178,6 +75,22 @@ onMounted(async () => {
       // ignore
     }
   }
+}
+
+function goToSystemSelect() {
+  router.push(`/projects/${projectId}/buildings/${buildingId}/system`)
+}
+
+function goBack() {
+  router.push(`/projects/${projectId}/buildings/${buildingId}`)
+}
+
+// Load existing results on mount
+onMounted(async () => {
+  await store.fetchLoadResults(buildingId)
+
+  // Load latest completed result
+  await loadLatestResult()
 
   // Fetch weather data
   weatherLoading.value = true
@@ -190,10 +103,6 @@ onMounted(async () => {
   } finally {
     weatherLoading.value = false
   }
-})
-
-onUnmounted(() => {
-  stopPolling()
 })
 
 // Display data: either from completed task or previous results
@@ -261,18 +170,9 @@ const displayData = computed(() => completedLoadData.value)
         <span>{{ t('weather.loadResults') }}</span>
       </template>
 
-      <!-- Progress Tracker (for tasks started from Project overview) -->
-      <SimulationProgress
-        v-if="activeResultId"
-        :status="wsConnected ? wsStatus : pollStatus"
-        :progress="wsConnected ? wsProgress : pollProgress"
-        :message="wsConnected ? wsMessage : (pollMessage || t('simulation.progress.polling'))"
-        :connected="wsConnected"
-      />
-
       <!-- No data hint -->
       <el-empty
-        v-else-if="!displayData"
+        v-if="!displayData"
         :description="t('simulation.loadCalc.noDataHint')"
       />
 
