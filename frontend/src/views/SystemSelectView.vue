@@ -72,7 +72,7 @@ function goBack() {
 <template>
   <div class="system-select-view">
     <div class="page-header">
-      <h1>{{ t('simulation.steps.systemConfig') }}</h1>
+      <h1>{{ t('nav.systemSelect') }}</h1>
     </div>
 
     <el-card>
@@ -117,8 +117,8 @@ function goBack() {
 
     <!-- Navigation -->
     <StepNav
-      :prev-label="t('simulation.steps.loadSimulation')"
-      :next-label="t('simulation.steps.energySimulation')"
+      :prev-label="t('nav.loadWeather')"
+      :next-label="t('nav.simulation')"
       :next-disabled="!store.systemConfigured"
       @prev="goBack"
       @next="goToSimulation"

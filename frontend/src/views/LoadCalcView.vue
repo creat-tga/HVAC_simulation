@@ -216,7 +216,7 @@ const displayData = computed(() => completedLoadData.value)
     <!-- Navigation -->
     <StepNav
       :prev-label="t('nav.buildingConfig')"
-      :next-label="t('simulation.loadPreview.nextStep')"
+      :next-label="t('nav.systemSelect')"
       :next-disabled="!store.loadCompleted"
       @prev="goBack"
       @next="goToSystemSelect"

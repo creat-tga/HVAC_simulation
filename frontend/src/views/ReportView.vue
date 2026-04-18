@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getSimulationDetail } from '@/api/simulation'
 import { getEnergyReport, getCostReport, getCarbonReport } from '@/api/reports'
@@ -15,8 +15,10 @@ import { useResponsive } from '@/composables/useResponsive'
 const { isMobile } = useResponsive()
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const buildingId = route.params.buildingId as string
-const resultId = route.params.resultId as string
+const resultId = route.params.resultId as string | undefined
+const projectId = route.params.projectId as string
 
 const activeTab = ref('energy')
 const simulation = ref<SimulationDetail | null>(null)
@@ -25,7 +27,15 @@ const costReport = ref<CostReport | null>(null)
 const carbonReport = ref<CarbonReport | null>(null)
 const loading = ref(true)
 
+function goToSimulation() {
+  router.push(`/projects/${projectId}/buildings/${buildingId}/simulation`)
+}
+
 onMounted(async () => {
+  if (!resultId) {
+    loading.value = false
+    return
+  }
   try {
     // Load simulation detail independently — it may fail for a new DB
     getSimulationDetail(buildingId, resultId)
@@ -53,7 +63,14 @@ onMounted(async () => {
   <div class="report-view" v-loading="loading">
     <h1>{{ t('report.title') }}</h1>
 
-    <template v-if="energyReport || costReport || carbonReport">
+    <!-- No result selected -->
+    <template v-if="!resultId && !loading">
+      <el-empty :description="t('report.noResult')">
+        <el-button type="primary" @click="goToSimulation">{{ t('report.goToSimulation') }}</el-button>
+      </el-empty>
+    </template>
+
+    <template v-else-if="energyReport || costReport || carbonReport">
       <!-- Summary Cards -->
       <el-row :gutter="20" class="summary-cards">
         <el-col :xs="12" :sm="6">

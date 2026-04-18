@@ -3,20 +3,22 @@ import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '@/stores/project'
+import { useSimulationStore } from '@/stores/simulation'
 import {
   HomeFilled,
   OfficeBuilding,
   ArrowDown,
+  Check,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const store = useProjectStore()
+const simStore = useSimulationStore()
 
 const projectId = computed(() => route.params.projectId as string | undefined)
 const buildingId = computed(() => route.params.buildingId as string | undefined)
-const resultId = computed(() => route.params.resultId as string | undefined)
 
 // Ensure buildings are loaded when navigating directly to a building page
 watch(
@@ -33,6 +35,65 @@ const currentBuilding = computed(() =>
   store.buildings.find(b => b.id === buildingId.value),
 )
 
+// Workflow steps definition
+const workflowSteps = computed(() => {
+  if (!projectId.value || !buildingId.value) return []
+  const base = `/projects/${projectId.value}/buildings/${buildingId.value}`
+  return [
+    {
+      step: 1,
+      name: 'building',
+      label: t('nav.buildingConfig'),
+      desc: t('nav.stepDesc.building'),
+      path: base,
+      icon: '📐',
+      completed: !!(currentBuilding.value && currentBuilding.value.zones && currentBuilding.value.zones.length > 0),
+    },
+    {
+      step: 2,
+      name: 'loadCalc',
+      label: t('nav.loadWeather'),
+      desc: t('nav.stepDesc.load'),
+      path: `${base}/load`,
+      icon: '📊',
+      completed: simStore.loadCompleted,
+    },
+    {
+      step: 3,
+      name: 'systemSelect',
+      label: t('nav.systemSelect'),
+      desc: t('nav.stepDesc.system'),
+      path: `${base}/system`,
+      icon: '⚙️',
+      completed: simStore.systemConfigured,
+    },
+    {
+      step: 4,
+      name: 'simulation',
+      label: t('nav.simulation'),
+      desc: t('nav.stepDesc.energy'),
+      path: `${base}/simulation`,
+      icon: '🔬',
+      completed: simStore.energyResults.some(r => r.status === 'completed'),
+    },
+    {
+      step: 5,
+      name: 'report',
+      label: t('nav.report'),
+      desc: t('nav.stepDesc.report'),
+      path: `${base}/report`,
+      icon: '📈',
+      completed: false,
+    },
+  ]
+})
+
+// Current active step
+const currentStep = computed(() => {
+  const step = route.meta.step as number | undefined
+  return step || 0
+})
+
 function isActive(name: string) {
   return route.name === name
 }
@@ -48,12 +109,13 @@ function switchBuilding(bid: string) {
   if (routeName === 'loadCalc') router.push(`${base}/load`)
   else if (routeName === 'systemSelect') router.push(`${base}/system`)
   else if (routeName === 'simulation') router.push(`${base}/simulation`)
+  else if (routeName === 'report') router.push(`${base}/report`)
   else router.push(base)
 }
 </script>
 
 <template>
-  <el-aside width="220px" class="app-sidebar">
+  <el-aside width="240px" class="app-sidebar">
     <nav class="sidebar-nav">
       <!-- Group 1: Project Management -->
       <div class="nav-group">
@@ -77,7 +139,7 @@ function switchBuilding(bid: string) {
         </div>
       </div>
 
-      <!-- Group 2: Building Design (only when in building context) -->
+      <!-- Group 2: Simulation Workflow (only when in building context) -->
       <template v-if="projectId && buildingId">
         <div class="nav-group">
           <div class="nav-group-title">{{ t('nav.groupBuilding') }}</div>
@@ -114,52 +176,32 @@ function switchBuilding(bid: string) {
             <span class="building-name">{{ currentBuilding?.name || '—' }}</span>
           </div>
 
-          <!-- Building Sub-items (workflow steps) -->
-          <div
-            class="nav-item sub-item"
-            :class="{ 'is-active': isActive('building') }"
-            @click="navigate(`/projects/${projectId}/buildings/${buildingId}`)"
-          >
-            <span class="step-badge">1</span>
-            <span>{{ t('nav.buildingConfig') }}</span>
-          </div>
-          <div
-            class="nav-item sub-item"
-            :class="{ 'is-active': isActive('loadCalc') }"
-            @click="navigate(`/projects/${projectId}/buildings/${buildingId}/load`)"
-          >
-            <span class="step-badge">2</span>
-            <span>{{ t('nav.loadWeather') }}</span>
-          </div>
-          <div
-            class="nav-item sub-item"
-            :class="{ 'is-active': isActive('systemSelect') }"
-            @click="navigate(`/projects/${projectId}/buildings/${buildingId}/system`)"
-          >
-            <span class="step-badge">3</span>
-            <span>{{ t('nav.systemSelect') }}</span>
-          </div>
-        </div>
-
-        <!-- Group 3: Simulation Results -->
-        <div class="nav-group">
-          <div class="nav-group-title">{{ t('nav.groupResult') }}</div>
-          <div
-            class="nav-item"
-            :class="{ 'is-active': isActive('simulation') }"
-            @click="navigate(`/projects/${projectId}/buildings/${buildingId}/simulation`)"
-          >
-            <span class="step-badge">4</span>
-            <span>{{ t('nav.simulation') }}</span>
-          </div>
-          <div
-            v-if="resultId"
-            class="nav-item"
-            :class="{ 'is-active': isActive('report') }"
-            @click="navigate(`/projects/${projectId}/buildings/${buildingId}/report/${resultId}`)"
-          >
-            <span class="step-badge">5</span>
-            <span>{{ t('nav.report') }}</span>
+          <!-- Workflow Steps -->
+          <div class="workflow-steps">
+            <div
+              v-for="ws in workflowSteps"
+              :key="ws.step"
+              class="workflow-step"
+              :class="{
+                'is-active': isActive(ws.name),
+                'is-completed': ws.completed && !isActive(ws.name),
+                'is-future': ws.step > currentStep && !ws.completed,
+              }"
+              @click="navigate(ws.path)"
+            >
+              <div class="step-indicator">
+                <div class="step-line-top" v-if="ws.step > 1" />
+                <div class="step-circle">
+                  <el-icon v-if="ws.completed && !isActive(ws.name)" :size="12"><Check /></el-icon>
+                  <span v-else>{{ ws.step }}</span>
+                </div>
+                <div class="step-line-bottom" v-if="ws.step < 5" />
+              </div>
+              <div class="step-content">
+                <div class="step-label">{{ ws.label }}</div>
+                <div class="step-desc">{{ ws.desc }}</div>
+              </div>
+            </div>
           </div>
         </div>
       </template>
@@ -241,36 +283,130 @@ function switchBuilding(bid: string) {
   color: #0891b2;
 }
 
-.nav-item.sub-item {
-  padding-left: 28px;
-  font-size: 13px;
-  padding-top: 7px;
-  padding-bottom: 7px;
+/* ── Workflow Steps ── */
+.workflow-steps {
+  padding: 4px 0 0 6px;
 }
 
-.nav-item.sub-item.is-active {
-  box-shadow: inset 3px 0 0 #06b6d4;
+.workflow-step {
+  display: flex;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  user-select: none;
+  padding-right: 8px;
 }
 
-/* ── Step Badge ── */
-.step-badge {
-  display: inline-flex;
+.workflow-step:hover .step-content {
+  background: rgba(6, 182, 212, 0.05);
+}
+
+.workflow-step:active {
+  transform: scale(0.98);
+}
+
+/* Step indicator (circle + lines) */
+.step-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 24px;
+  flex-shrink: 0;
+}
+
+.step-line-top,
+.step-line-bottom {
+  width: 2px;
+  flex: 1;
+  background: rgba(203, 213, 225, 0.5);
+  transition: background 0.2s;
+}
+
+.workflow-step.is-completed .step-line-top,
+.workflow-step.is-completed .step-line-bottom {
+  background: #06b6d4;
+}
+
+.workflow-step.is-active .step-line-top {
+  background: #06b6d4;
+}
+
+.step-circle {
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  background: rgba(148, 163, 184, 0.15);
+  background: rgba(148, 163, 184, 0.12);
+  border: 2px solid rgba(148, 163, 184, 0.35);
   color: #94a3b8;
   font-size: 11px;
   font-weight: 700;
   flex-shrink: 0;
-  transition: all 0.18s ease;
+  transition: all 0.2s ease;
 }
 
-.nav-item.is-active .step-badge {
-  background: rgba(8, 145, 178, 0.15);
+.workflow-step.is-active .step-circle {
+  background: rgba(6, 182, 212, 0.15);
+  border-color: #0891b2;
   color: #0891b2;
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+}
+
+.workflow-step.is-completed .step-circle {
+  background: #06b6d4;
+  border-color: #06b6d4;
+  color: white;
+}
+
+/* Step content */
+.step-content {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  transition: background 0.18s ease;
+  min-width: 0;
+}
+
+.workflow-step.is-active .step-content {
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.1), rgba(2, 132, 199, 0.05));
+}
+
+.step-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #475569;
+  line-height: 1.3;
+  transition: color 0.18s;
+}
+
+.workflow-step.is-active .step-label {
+  color: #0891b2;
+  font-weight: 600;
+}
+
+.workflow-step.is-completed .step-label {
+  color: #0e7490;
+}
+
+.workflow-step.is-future .step-label {
+  color: #94a3b8;
+}
+
+.step-desc {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.4;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workflow-step.is-active .step-desc {
+  color: #0891b2;
+  opacity: 0.7;
 }
 
 /* ── Building Switcher ── */
@@ -338,9 +474,16 @@ function switchBuilding(bid: string) {
     -webkit-tap-highlight-color: transparent;
   }
 
-  .nav-item.sub-item {
-    padding: 10px 14px 10px 28px;
+  .workflow-step {
+    padding-right: 4px;
+  }
+
+  .step-label {
     font-size: 14px;
+  }
+
+  .step-desc {
+    font-size: 12px;
   }
 
   .sidebar-nav {

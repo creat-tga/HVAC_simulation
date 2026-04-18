@@ -180,7 +180,7 @@ function goToLoadCalc() {
 <template>
   <div class="simulation-view">
     <div class="page-header">
-      <h1>{{ t('simulation.steps.energySimulation') }}</h1>
+      <h1>{{ t('nav.simulation') }}</h1>
     </div>
 
     <el-card>
@@ -285,7 +285,7 @@ function goToLoadCalc() {
 
     <!-- Navigation -->
     <StepNav
-      :prev-label="t('simulation.steps.systemConfig')"
+      :prev-label="t('nav.systemSelect')"
       @prev="goBack"
     />
   </div>
