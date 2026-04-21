@@ -45,6 +45,8 @@ export interface BuildingZone {
   roof_u_value: number
   // Internal gains with schedule support
   people_density: ParamConfig
+  /** 人员散热量 W/人 (默认 134) */
+  people_heat_gain?: number
   lighting_density: ParamConfig
   equipment_density: ParamConfig
   fresh_air_volume: ParamConfig

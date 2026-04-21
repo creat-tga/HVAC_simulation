@@ -77,6 +77,19 @@ watch(() => store.buildings, () => {
   if (store.buildings.length > 0) fetchSimResults()
 })
 
+// Auto-refresh simulation results in the building list when any task completes.
+// Tracks the number of completed/failed tasks; whenever it grows, refresh.
+const _completedSeen = ref(0)
+watch(
+  () => tracker.completedTasks.length,
+  (n) => {
+    if (n > _completedSeen.value) {
+      _completedSeen.value = n
+      fetchSimResults()
+    }
+  }
+)
+
 onMounted(async () => {
   const { data } = await getProject(projectId)
   project.value = data

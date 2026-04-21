@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
         # SQLite-only: lightweight column additions for existing user table
         if settings.database_url.startswith("sqlite"):
             await _sqlite_migrate_users(conn)
+            await _sqlite_migrate_hvac_systems(conn)
     # Seed admin user + preset weather files
     async with async_session() as session:
         await seed_admin(session)
@@ -63,6 +64,26 @@ async def _sqlite_migrate_users(conn) -> None:
         statements.append("ALTER TABLE users ADD COLUMN last_login_at DATETIME")
     for sql in statements:
         await conn.execute(text(sql))
+
+
+async def _sqlite_migrate_hvac_systems(conn) -> None:
+    """Drop & recreate hvac_systems if the schema diverges from the model.
+
+    Legacy installs may have an older table without the building_id column,
+    which causes OperationalError on relationship loads / cascade deletes.
+    Since this table only stores derived runtime data, dropping is safe.
+    """
+    from sqlalchemy import text
+    res = await conn.execute(text("PRAGMA table_info(hvac_systems)"))
+    rows = res.fetchall()
+    if not rows:
+        return  # table absent; create_all will handle it
+    cols = {row[1] for row in rows}
+    if "building_id" not in cols:
+        await conn.execute(text("DROP TABLE hvac_systems"))
+        # Recreate via metadata (idempotent)
+        from app.models.simulation import HVACSystem  # noqa: F401
+        await conn.run_sync(Base.metadata.create_all)
 
 
 app = FastAPI(

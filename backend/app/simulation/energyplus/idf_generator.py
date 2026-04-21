@@ -259,8 +259,14 @@ def generate_idf(
         parts.append(_offset_schedule(ht_sn, temp_val, -SETPOINT_DEADBAND, off_value=ht_off))
         sched_map["heating_sp"] = ht_sn
 
+        # ---- 人员活动水平（散热量 W/人，每区域独立） ----
+        heat_gain = float(zone.get("people_heat_gain", 134.0))
+        act_sn = f"{zn}_Activity_Level"
+        parts.append(f"Schedule:Constant, {act_sn}, Any Number, {heat_gain};")
+        sched_map["activity_level"] = act_sn
+
         # ---- 内部得热对象 ----
-        parts.append(_people(zn, area, sched_map["people_density"]))       # 人员
+        parts.append(_people(zn, area, sched_map["people_density"], sched_map["activity_level"]))       # 人员
         parts.append(_lights(zn, area, sched_map["lighting_density"]))     # 照明
         parts.append(_equipment(zn, area, sched_map["equipment_density"])) # 设备
 
@@ -854,19 +860,19 @@ def _offset_schedule(name: str, param: dict[str, Any] | float | int | None,
 # 例如：照明 schedule 值=10 → 实际照明功率=10×1.0=10 W/m²
 # ---------------------------------------------------------------------------
 
-def _people(zn: str, area: float, sched: str) -> str:
+def _people(zn: str, area: float, sched: str, activity_sched: str = "Activity_Level_120") -> str:
     """生成 People 对象。
 
     - 方法: People/Area，设计密度 1.0 人/m²
     - 实际人员密度由 schedule 值决定（如 schedule=0.1 → 0.1人/m²）
     - 辐射分数: 0.3（30%辐射，70%对流）
-    - 活动水平: 120 W/人（办公活动等级）
+    - 活动水平: 由 activity_sched 决定（W/人）
     """
     return (
         f"People,\n"
         f"  {zn}_People, {zn}, {sched},\n"
         f"  People/Area, , 1.0, ,\n"
-        f"  0.3, autocalculate, Activity_Level_120;"
+        f"  0.3, autocalculate, {activity_sched};"
     )
 
 

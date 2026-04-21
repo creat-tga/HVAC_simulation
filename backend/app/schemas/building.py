@@ -47,6 +47,7 @@ class BuildingZone(BaseModel):
     roof_u_value: float = 0.4
     # Internal gains
     people_density: ParamConfig
+    people_heat_gain: float = Field(134.0, ge=0, le=1000)  # 人员散热量 W/人
     lighting_density: ParamConfig
     equipment_density: ParamConfig
     fresh_air_volume: ParamConfig

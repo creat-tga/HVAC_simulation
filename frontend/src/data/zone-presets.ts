@@ -9,9 +9,21 @@ function sch(name: string, days: number[], hours: number[], value: number) {
   return { name, start_month: 1, start_day: 1, end_month: 12, end_day: 31, days, hours, value }
 }
 
+/** Build a schedule with hourly_ratios (0~100 percent of fixed_value). */
+function schR(name: string, days: number[], ratios: number[]) {
+  return {
+    name,
+    start_month: 1, start_day: 1, end_month: 12, end_day: 31,
+    days,
+    hours: Array.from({ length: 24 }, (_, i) => i),
+    value: 0,
+    hourly_ratios: ratios,
+  }
+}
+
 const WD = [1, 2, 3, 4, 5]     // weekdays
 const WE = [6, 7]               // weekend
-const H8_18 = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+// kept for non-office presets (legacy hours+value form)
 const H10_16 = [10, 11, 12, 13, 14, 15]
 const H9_17 = [9, 10, 11, 12, 13, 14, 15, 16]
 const H10_22 = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
@@ -19,7 +31,7 @@ const H7_21 = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 const H_MEAL = [7, 8, 11, 12, 13, 17, 18, 19, 20]          // restaurant peak hours
 const H_MEAL_WE = [8, 9, 10, 11, 12, 13, 17, 18, 19, 20]   // weekend restaurant
 
-function pc(fixed: number, schedules: ReturnType<typeof sch>[]): ParamConfig {
+function pc(fixed: number, schedules: any[]): ParamConfig {
   return { mode: 'scheduled', fixed_value: fixed, schedules }
 }
 
@@ -29,6 +41,8 @@ function fixed(val: number): ParamConfig {
 
 export interface ZonePresetConfig {
   people_density: ParamConfig
+  /** 人员散热量 W/人 */
+  people_heat_gain?: number
   lighting_density: ParamConfig
   equipment_density: ParamConfig
   fresh_air_volume: ParamConfig
@@ -45,21 +59,22 @@ export const ZONE_PRESETS: Record<string, ZonePresetConfig> = {
   office: {
     floor_height: 3.5,
     wall_u_value: 0.8, window_u_value: 2.8, window_wall_ratio: 0.4, roof_u_value: 0.6,
+    people_heat_gain: 134,
     people_density: pc(0.1, [
-      sch('工作日', WD, H8_18, 0.1),
-      sch('周末', WE, H10_16, 0.02),
+      schR('工作日', WD, [0,0,0,0,0,0,0,0,100,100,100,100,30,100,100,100,100,50,10,10,10,0,0,0]),
+      schR('周末',   WE, [0,0,0,0,0,0,0,0,30,30,30,30,10,30,30,30,30,20,10,10,10,0,0,0]),
     ]),
-    lighting_density: pc(11, [
-      sch('工作日', WD, H8_18, 11),
-      sch('周末', WE, H10_16, 5),
+    lighting_density: pc(10, [
+      schR('工作日', WD, [0,0,0,0,0,0,0,0,100,100,100,100,30,100,100,100,100,50,10,10,10,0,0,0]),
+      schR('周末',   WE, [0,0,0,0,0,0,0,0,30,30,30,30,10,30,30,30,30,20,10,10,10,0,0,0]),
     ]),
-    equipment_density: pc(15, [
-      sch('工作日', WD, H8_18, 15),
-      sch('周末', WE, H10_16, 3),
+    equipment_density: pc(20, [
+      schR('工作日', WD, [0,0,0,0,0,0,0,0,100,100,100,100,30,100,100,100,100,50,10,10,10,0,0,0]),
+      schR('周末',   WE, [0,0,0,0,0,0,0,0,30,30,30,30,10,30,30,30,30,20,10,10,10,0,0,0]),
     ]),
-    fresh_air_volume: pc(30, [
-      sch('工作日', WD, H8_18, 30),
-      sch('周末', WE, H10_16, 15),
+    fresh_air_volume: pc(35, [
+      schR('工作日', WD, [0,0,0,0,0,0,0,0,100,100,100,100,30,100,100,100,100,50,10,10,10,0,0,0]),
+      schR('周末',   WE, [0,0,0,0,0,0,0,0,30,30,30,30,10,30,30,30,30,20,10,10,10,0,0,0]),
     ]),
   },
 

@@ -65,6 +65,16 @@ function paramUnit(key: string): string {
   return PARAM_UNITS[key] || ''
 }
 
+const PARAM_TYPE_MAP: Record<string, 'people' | 'lighting' | 'equipment' | 'fresh'> = {
+  people_density: 'people',
+  lighting_density: 'lighting',
+  equipment_density: 'equipment',
+  fresh_air_volume: 'fresh',
+}
+function paramType(key: string): 'people' | 'lighting' | 'equipment' | 'fresh' | undefined {
+  return PARAM_TYPE_MAP[key]
+}
+
 function createParamConfig(val: number): ParamConfig {
   return { mode: 'fixed', fixed_value: val, schedules: [] }
 }
@@ -91,12 +101,13 @@ function createDefaultZone(name?: string): BuildingZone {
     window_u_value: preset.window_u_value,
     window_wall_ratio: preset.window_wall_ratio,
     roof_u_value: preset.roof_u_value,
-    people_density: createParamConfig(preset.people_density.fixed_value),
-    lighting_density: createParamConfig(preset.lighting_density.fixed_value),
-    equipment_density: createParamConfig(preset.equipment_density.fixed_value),
-    fresh_air_volume: createParamConfig(preset.fresh_air_volume.fixed_value),
-    temperature: createParamConfig(26),
-    relative_humidity: createParamConfig(50),
+    people_density: deepCopyParam(preset.people_density),
+    people_heat_gain: preset.people_heat_gain ?? 134,
+    lighting_density: deepCopyParam(preset.lighting_density),
+    equipment_density: deepCopyParam(preset.equipment_density),
+    fresh_air_volume: deepCopyParam(preset.fresh_air_volume),
+    temperature: preset.temperature ? deepCopyParam(preset.temperature) : createParamConfig(26),
+    relative_humidity: preset.relative_humidity ? deepCopyParam(preset.relative_humidity) : createParamConfig(50),
   }
 }
 
@@ -117,6 +128,7 @@ function applyPreset(presetKey: string) {
   z.roof_u_value = preset.roof_u_value
   // Apply full param configs (deep copy to avoid shared references)
   z.people_density = deepCopyParam(preset.people_density)
+  z.people_heat_gain = preset.people_heat_gain ?? 134
   z.lighting_density = deepCopyParam(preset.lighting_density)
   z.equipment_density = deepCopyParam(preset.equipment_density)
   z.fresh_air_volume = deepCopyParam(preset.fresh_air_volume)
@@ -262,6 +274,41 @@ function schedulesConflict(a: DaySchedule, b: DaySchedule): boolean {
   return commonHours.length > 0
 }
 
+/** Conflict for internal-gain bar-chart schedules: date overlap + day-of-week overlap (no hour check). */
+function schedulesConflictByDays(a: DaySchedule, b: DaySchedule): boolean {
+  if (!dateRangesOverlap(a, b)) return false
+  const commonDays = a.days.filter(d => b.days.includes(d))
+  return commonDays.length > 0
+}
+
+const DOW_NAMES_ZH = ['', '一', '二', '三', '四', '五', '六', '日']
+
+/** Get human-readable conflict description for schedule[idx], or '' if no conflict. */
+function getInternalScheduleConflictMsg(schedules: DaySchedule[], idx: number): string {
+  const cur = schedules[idx]
+  if (!cur) return ''
+  const conflicts: string[] = []
+  for (let j = 0; j < schedules.length; j++) {
+    if (j === idx) continue
+    const other = schedules[j]
+    if (!schedulesConflictByDays(cur, other)) continue
+    // Compute intersection
+    const aS = dateToNum(cur.start_month, cur.start_day)
+    const aE = dateToNum(cur.end_month, cur.end_day)
+    const bS = dateToNum(other.start_month, other.start_day)
+    const bE = dateToNum(other.end_month, other.end_day)
+    const lo = Math.max(aS, bS)
+    const hi = Math.min(aE, bE)
+    const loM = Math.floor(lo / 100), loD = lo % 100
+    const hiM = Math.floor(hi / 100), hiD = hi % 100
+    const days = cur.days.filter(d => other.days.includes(d))
+    const daysStr = days.map(d => '周' + DOW_NAMES_ZH[d]).join('、')
+    const otherName = other.name || `日程${j + 1}`
+    conflicts.push(`与「${otherName}」在 ${loM}/${loD}~${hiM}/${hiD} ${daysStr} 重叠`)
+  }
+  return conflicts.join('；')
+}
+
 function getConflicts(schedules: DaySchedule[]): [number, number][] {
   const conflicts: [number, number][] = []
   for (let i = 0; i < schedules.length; i++) {
@@ -284,6 +331,7 @@ function isScheduleInConflict(schedules: DaySchedule[], idx: number): boolean {
 }
 
 const ALL_PARAM_METAS = [...PARAM_METAS, ...SETPOINT_METAS]
+void ALL_PARAM_METAS
 
 // ----- Global conflict check (debounced for performance) -----
 const hasAnyConflict = ref(false)
@@ -291,7 +339,20 @@ let _conflictTimer: ReturnType<typeof setTimeout> | null = null
 
 function _checkConflicts() {
   for (const zone of editZones.value) {
-    for (const pm of ALL_PARAM_METAS) {
+    // Internal gains: use day-based conflict (no hour check)
+    for (const pm of PARAM_METAS) {
+      const param = getParam(zone, pm.key)
+      if (param.mode === 'scheduled') {
+        for (let i = 0; i < param.schedules.length; i++) {
+          if (getInternalScheduleConflictMsg(param.schedules, i)) {
+            hasAnyConflict.value = true
+            return
+          }
+        }
+      }
+    }
+    // Setpoints: legacy hour-based conflict
+    for (const pm of SETPOINT_METAS) {
       const param = getParam(zone, pm.key)
       if (param.mode === 'scheduled' && getConflicts(param.schedules).length > 0) {
         hasAnyConflict.value = true
@@ -572,6 +633,7 @@ function normalizeZone(raw: any): BuildingZone {
     window_wall_ratio: raw.window_wall_ratio ?? 0.4,
     roof_u_value: raw.roof_u_value ?? 0.8,
     people_density: toParam(raw.people_density, 0.1),
+    people_heat_gain: typeof raw.people_heat_gain === 'number' ? raw.people_heat_gain : 134,
     lighting_density: toParam(raw.lighting_density, 10),
     equipment_density: toParam(raw.equipment_density, 15),
     fresh_air_volume: toParam(raw.fresh_air_volume, 30),
@@ -930,6 +992,14 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
                 size="small" style="width: 130px" />
               <span class="ig-peak-unit">{{ paramUnit(pm.key) }}</span>
             </div>
+            <!-- 人员散热量（仅在 people_density 时显示） -->
+            <div v-if="pm.key === 'people_density'" class="ig-peak">
+              <span class="ig-peak-label">散热量:</span>
+              <el-input-number v-model="activeZone.people_heat_gain"
+                :min="0" :max="500" :precision="0" :step="1"
+                size="small" style="width: 110px" />
+              <span class="ig-peak-unit">W/人</span>
+            </div>
             <el-button type="primary" plain size="small" :icon="Plus"
               :disabled="getParam(activeZone, pm.key).schedules.length >= MAX_SCHEDULES"
               @click="addScheduleForParam(getParam(activeZone, pm.key))">
@@ -944,8 +1014,10 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
               :model-value="sch"
               :peak-value="getParam(activeZone, pm.key).fixed_value"
               :unit="paramUnit(pm.key)"
+              :type="paramType(pm.key)"
               :param-label="t(pm.label)"
               :removable="getParam(activeZone, pm.key).schedules.length > 1"
+              :conflict-message="getInternalScheduleConflictMsg(getParam(activeZone, pm.key).schedules, sIdx)"
               @update:model-value="(v: DaySchedule) => getParam(activeZone, pm.key).schedules[sIdx] = v"
               @remove="removeScheduleAt(getParam(activeZone, pm.key), sIdx)"
             />

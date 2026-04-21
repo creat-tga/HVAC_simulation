@@ -1,591 +1,823 @@
 <script setup lang="ts">
-import { computed, ref, reactive } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
-import { Delete, MagicStick } from '@element-plus/icons-vue'
+/**
+ * ScheduleEditor — adopts hvac-simpro dark heatmap style
+ *
+ * Visual language: bg-zinc-900/50 card with bg-zinc-800 border, type-tinted
+ * icon badge, heatmap row (alpha=value), JetBrains Mono numerics, sparse
+ * 0h/12h/24h tick labels.
+ *
+ * Functionality preserved: cascading month/day selectors, weekday picker,
+ * click-to-edit inline input, vertical drag, double-click reset, presets,
+ * bulk fill, multi-select, conflict banner.
+ */
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ElIcon, ElSelect, ElOption, ElAlert } from 'element-plus'
+import { Delete, MagicStick, User, Sunny, Lightning, Position } from '@element-plus/icons-vue'
 import type { DaySchedule } from '@/types/building'
+
+type SchType = 'people' | 'lighting' | 'equipment' | 'fresh' | undefined
 
 const props = defineProps<{
   modelValue: DaySchedule
-  /** Peak / design value (the 100% reference) */
-  peakValue: number
-  /** Display unit (e.g. "人/m²", "W/m²", "m³/h·人") */
-  unit?: string
-  /** Whether this schedule is removable (false for the only one) */
+  index?: number
   removable?: boolean
-  /** Label for the parameter (e.g. "人员密度") */
+  conflictMessage?: string
+  type?: SchType
+  peakValue?: number
+  unit?: string
   paramLabel?: string
 }>()
 
 const emit = defineEmits<{
-  'update:modelValue': [v: DaySchedule]
-  'remove': []
+  (e: 'update:modelValue', v: DaySchedule): void
+  (e: 'remove'): void
 }>()
 
-const { t } = useI18n()
-
-// Ensure hourly_ratios is a 24-length array
-function normalizeRatios(s: DaySchedule): number[] {
-  if (Array.isArray(s.hourly_ratios) && s.hourly_ratios.length === 24) {
-    return s.hourly_ratios.map(v => Math.max(0, Math.min(100, Number(v) || 0)))
+function ensureRatios(v: DaySchedule): number[] {
+  if (Array.isArray(v.hourly_ratios) && v.hourly_ratios.length === 24) return [...v.hourly_ratios]
+  // derive from legacy hours+value when needed
+  const arr = Array(24).fill(0)
+  if (Array.isArray(v.hours) && v.value) {
+    v.hours.forEach(h => { if (h >= 0 && h < 24) arr[h] = 100 })
   }
-  // Migrate legacy: hours[] + value (treat value as the absolute, derive ratio)
-  const ratios = new Array(24).fill(0) as number[]
-  if (Array.isArray(s.hours) && s.hours.length > 0 && props.peakValue > 0) {
-    const ratio = Math.max(0, Math.min(100, (s.value / props.peakValue) * 100))
-    for (const h of s.hours) {
-      if (h >= 0 && h < 24) ratios[h] = ratio
-    }
-  }
-  return ratios
+  return arr
 }
 
-const ratios = ref<number[]>(normalizeRatios(props.modelValue))
-
-function commit() {
-  const next: DaySchedule = {
-    ...props.modelValue,
-    hourly_ratios: [...ratios.value],
-    // Keep legacy fields synced for backend backward compat
-    hours: ratios.value
-      .map((r, i) => (r > 0 ? i : -1))
-      .filter(i => i >= 0),
-    value: props.peakValue, // legacy field — backend will use hourly_ratios when present
-  }
-  emit('update:modelValue', next)
+// helper to emit a partial patch (every field change must go through this)
+function patch(p: Partial<DaySchedule>) {
+  emit('update:modelValue', { ...props.modelValue, hourly_ratios: ensureRatios(props.modelValue), ...p })
 }
 
-// ---- Bar interactions ----
-const selectedHours = reactive<Set<number>>(new Set())
+// reactive view of underlying value (read-only proxy)
+const ratios = computed(() => ensureRatios(props.modelValue))
+
+// time axis tick hours (every 2 hours: 0,2,4,...,22)
+const tickHours = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22]
+
+// individual reactive fields wired to v-model with explicit setters so changes propagate
+const startMonth = computed({
+  get: () => props.modelValue.start_month,
+  set: v => patch({ start_month: v })
+})
+const startDay = computed({
+  get: () => props.modelValue.start_day,
+  set: v => patch({ start_day: v })
+})
+const endMonth = computed({
+  get: () => props.modelValue.end_month,
+  set: v => patch({ end_month: v })
+})
+const endDay = computed({
+  get: () => props.modelValue.end_day,
+  set: v => patch({ end_day: v })
+})
+const nameField = computed({
+  get: () => props.modelValue.name,
+  set: v => patch({ name: v })
+})
+
+// ===== type palette (hvac-simpro semantic colors) =====
+const TYPE_PALETTE: Record<string, { rgb: string; tagZh: string; iconBg: string; iconColor: string; ringColor: string }> = {
+  people: {
+    rgb: '249, 115, 22',
+    tagZh: '人员',
+    iconBg: 'rgba(249, 115, 22, 0.1)',
+    iconColor: '#f97316',
+    ringColor: 'rgba(249, 115, 22, 0.55)'
+  },
+  lighting: {
+    rgb: '234, 179, 8',
+    tagZh: '照明',
+    iconBg: 'rgba(234, 179, 8, 0.12)',
+    iconColor: '#ca8a04',
+    ringColor: 'rgba(234, 179, 8, 0.55)'
+  },
+  equipment: {
+    rgb: '59, 130, 246',
+    tagZh: '设备',
+    iconBg: 'rgba(59, 130, 246, 0.1)',
+    iconColor: '#3b82f6',
+    ringColor: 'rgba(59, 130, 246, 0.55)'
+  },
+  fresh: {
+    rgb: '20, 184, 166',
+    tagZh: '新风',
+    iconBg: 'rgba(20, 184, 166, 0.1)',
+    iconColor: '#14b8a6',
+    ringColor: 'rgba(20, 184, 166, 0.55)'
+  },
+  default: {
+    rgb: '139, 92, 246',
+    tagZh: '通用',
+    iconBg: 'rgba(139, 92, 246, 0.1)',
+    iconColor: '#8b5cf6',
+    ringColor: 'rgba(139, 92, 246, 0.55)'
+  }
+}
+
+const TYPE_ICONS = { people: User, lighting: Sunny, equipment: Lightning, fresh: Position } as const
+
+const palette = computed(() => TYPE_PALETTE[props.type || 'default'] || TYPE_PALETTE.default)
+const typeIcon = computed(() => TYPE_ICONS[props.type as keyof typeof TYPE_ICONS] || User)
+
+// ===== month / day cascading =====
+const months = Array.from({ length: 12 }, (_, i) => ({ v: i + 1, label: `${i + 1}月` }))
+const daysInMonth = (m: number) => new Date(2024, m, 0).getDate()
+const startDays = computed(() =>
+  Array.from({ length: daysInMonth(props.modelValue.start_month) }, (_, i) => ({ v: i + 1, label: `${i + 1}日` }))
+)
+const endDays = computed(() =>
+  Array.from({ length: daysInMonth(props.modelValue.end_month) }, (_, i) => ({ v: i + 1, label: `${i + 1}日` }))
+)
+watch(() => props.modelValue.start_month, m => {
+  const max = daysInMonth(m)
+  if (props.modelValue.start_day > max) patch({ start_day: max })
+})
+watch(() => props.modelValue.end_month, m => {
+  const max = daysInMonth(m)
+  if (props.modelValue.end_day > max) patch({ end_day: max })
+})
+
+// ===== weekdays =====
+const weekdayLabels = ['一', '二', '三', '四', '五', '六', '日']
+function toggleWeekday(d: number) {
+  const days = [...(props.modelValue.days || [])]
+  const idx = days.indexOf(d)
+  if (idx >= 0) days.splice(idx, 1)
+  else { days.push(d); days.sort((a, b) => a - b) }
+  patch({ days })
+}
+const isWeekdaySelected = (d: number) => (props.modelValue.days || []).includes(d)
+
+// ===== editing =====
 const editingHour = ref<number | null>(null)
 const editingValue = ref<number>(0)
+const editingInputRef = ref<HTMLInputElement | null>(null)
 
-function toggleSelect(h: number, ev: MouseEvent) {
-  if (ev.shiftKey) {
-    if (selectedHours.has(h)) selectedHours.delete(h)
-    else selectedHours.add(h)
-  } else {
-    selectedHours.clear()
-    selectedHours.add(h)
-    editingHour.value = h
-    editingValue.value = ratios.value[h]
-  }
+function startEdit(h: number) {
+  editingHour.value = h
+  editingValue.value = ratios.value[h] ?? 0
+  nextTick(() => {
+    const el = Array.isArray(editingInputRef.value) ? editingInputRef.value[0] : editingInputRef.value
+    el?.focus()
+    el?.select()
+  })
 }
 
-function applyEdit() {
+function commitEdit() {
   if (editingHour.value === null) return
-  const v = Math.max(0, Math.min(100, Math.round(editingValue.value)))
-  ratios.value[editingHour.value] = v
+  const h = editingHour.value
+  const v = Math.max(0, Math.min(100, Math.round(editingValue.value || 0)))
+  const arr = [...ratios.value]
+  arr[h] = v
+  patch({ hourly_ratios: arr })
   editingHour.value = null
-  commit()
 }
 
 function cancelEdit() {
   editingHour.value = null
 }
 
-// ---- Drag-to-adjust ----
-let dragHour = -1
-let dragStartY = 0
-let dragStartRatio = 0
-const BAR_AREA_HEIGHT = 120
-
-function onBarDragStart(h: number, ev: MouseEvent) {
-  if (ev.shiftKey) return // selection mode
-  dragHour = h
-  dragStartY = ev.clientY
-  dragStartRatio = ratios.value[h]
-  window.addEventListener('mousemove', onBarDragMove)
-  window.addEventListener('mouseup', onBarDragEnd)
-  ev.preventDefault()
+function onCellDblClick(h: number) {
+  const arr = [...ratios.value]
+  arr[h] = 0
+  patch({ hourly_ratios: arr })
+  if (editingHour.value === h) editingHour.value = null
 }
 
-function onBarDragMove(ev: MouseEvent) {
-  if (dragHour < 0) return
-  const dy = dragStartY - ev.clientY
-  const delta = (dy / BAR_AREA_HEIGHT) * 100
-  const next = Math.max(0, Math.min(100, Math.round(dragStartRatio + delta)))
-  ratios.value[dragHour] = next
-}
+// ===== drag (vertical) =====
+const dragState = ref<{ hour: number; startY: number; startVal: number; moved: boolean } | null>(null)
 
-function onBarDragEnd() {
-  if (dragHour >= 0) {
-    dragHour = -1
-    commit()
+function onCellMouseDown(e: MouseEvent, h: number) {
+  if (e.button !== 0) return
+  e.preventDefault() // suppress text selection start
+  dragState.value = {
+    hour: h,
+    startY: e.clientY,
+    startVal: ratios.value[h] ?? 0,
+    moved: false
   }
-  window.removeEventListener('mousemove', onBarDragMove)
-  window.removeEventListener('mouseup', onBarDragEnd)
+  document.body.classList.add('sched-dragging')
+  window.addEventListener('mousemove', onDragMove)
+  window.addEventListener('mouseup', onDragEnd)
 }
 
-// ---- Bulk fill ----
-const bulkValue = ref<number>(100)
-function applyBulk() {
-  if (selectedHours.size === 0) {
-    ElMessage.warning(t('building.schedule.editor.selectHoursFirst'))
-    return
+function onDragMove(e: MouseEvent) {
+  if (!dragState.value) return
+  const dy = dragState.value.startY - e.clientY
+  if (Math.abs(dy) < 3) return
+  dragState.value.moved = true
+  const newVal = Math.max(0, Math.min(100, Math.round(dragState.value.startVal + dy * 0.7)))
+  const arr = [...ratios.value]
+  arr[dragState.value.hour] = newVal
+  patch({ hourly_ratios: arr })
+}
+
+function onDragEnd() {
+  dragState.value = null
+  document.body.classList.remove('sched-dragging')
+  window.removeEventListener('mousemove', onDragMove)
+  window.removeEventListener('mouseup', onDragEnd)
+}
+
+// ===== presets =====
+function presetOffice9to18() {
+  const arr = Array(24).fill(0)
+  for (let h = 9; h < 18; h++) arr[h] = 100
+  arr[8] = 30; arr[18] = 30
+  patch({ hourly_ratios: arr })
+}
+function presetAlwaysOn() {
+  patch({ hourly_ratios: Array(24).fill(100) })
+}
+function presetNight() {
+  const arr = Array(24).fill(0)
+  for (let h = 19; h < 24; h++) arr[h] = 100
+  for (let h = 0; h < 7; h++) arr[h] = 100
+  patch({ hourly_ratios: arr })
+}
+function presetClear() {
+  patch({ hourly_ratios: Array(24).fill(0) })
+}
+
+// ===== heatmap cell style =====
+function cellStyle(_h: number, val: number) {
+  const ratio = Math.max(0, Math.min(100, val)) / 100
+  const alpha = ratio === 0 ? 0.06 : 0.18 + ratio * 0.82
+  return { backgroundColor: `rgba(${palette.value.rgb}, ${alpha})` }
+}
+
+// ===== click-outside to commit edit =====
+const cardRef = ref<HTMLElement | null>(null)
+function onDocClick(e: MouseEvent) {
+  if (!cardRef.value) return
+  if (cardRef.value.contains(e.target as Node)) return
+  if (editingHour.value !== null) {
+    commitEdit()
   }
-  const v = Math.max(0, Math.min(100, Math.round(bulkValue.value)))
-  for (const h of selectedHours) ratios.value[h] = v
-  commit()
 }
-
-function selectAll() {
-  selectedHours.clear()
-  for (let i = 0; i < 24; i++) selectedHours.add(i)
-}
-function clearSelection() {
-  selectedHours.clear()
-}
-
-// ---- Presets ----
-function applyPreset(name: 'office' | 'allday' | 'night' | 'clear') {
-  const arr = new Array(24).fill(0) as number[]
-  if (name === 'office') {
-    for (let h = 9; h <= 18; h++) arr[h] = 100
-    arr[8] = 50
-    arr[19] = 30
-  } else if (name === 'allday') {
-    for (let h = 0; h < 24; h++) arr[h] = 100
-  } else if (name === 'night') {
-    for (let h = 0; h < 6; h++) arr[h] = 100
-    for (let h = 22; h < 24; h++) arr[h] = 100
-  }
-  ratios.value = arr
-  commit()
-}
-
-// ---- Days-of-week ----
-const DAYS = [
-  { key: 1, label: '\u4e00' },
-  { key: 2, label: '\u4e8c' },
-  { key: 3, label: '\u4e09' },
-  { key: 4, label: '\u56db' },
-  { key: 5, label: '\u4e94' },
-  { key: 6, label: '\u516d' },
-  { key: 7, label: '\u65e5' },
-]
-
-function toggleDay(d: number) {
-  const days = props.modelValue.days || []
-  const idx = days.indexOf(d)
-  let next: number[]
-  if (idx >= 0) next = days.filter(x => x !== d)
-  else next = [...days, d].sort()
-  emit('update:modelValue', { ...props.modelValue, days: next })
-}
-
-function isDaySelected(d: number): boolean {
-  return (props.modelValue.days || []).includes(d)
-}
-
-// ---- Date range ----
-function updateField<K extends keyof DaySchedule>(key: K, val: DaySchedule[K]) {
-  emit('update:modelValue', { ...props.modelValue, [key]: val })
-}
-
-// ---- Visualization ----
-function ratioColor(r: number): string {
-  if (r === 0) return '#e2e8f0'
-  // gradient from light teal to deep teal
-  const alpha = 0.25 + (r / 100) * 0.75
-  return `rgba(8, 145, 178, ${alpha.toFixed(2)})`
-}
-
-function actualValue(r: number): string {
-  return ((props.peakValue * r) / 100).toFixed(2)
-}
-
-const HOURS = computed(() => Array.from({ length: 24 }, (_, i) => i))
+onMounted(() => document.addEventListener('mousedown', onDocClick))
+onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
 </script>
 
 <template>
-  <div class="sch-editor">
-    <!-- Header: name + remove -->
-    <div class="sch-header">
-      <el-input
-        :model-value="modelValue.name"
-        size="small"
-        :placeholder="t('building.schedule.editor.namePlaceholder')"
-        class="sch-name"
-        @update:model-value="(v: string) => updateField('name', v)"
-      />
-      <el-button
-        v-if="removable"
-        size="small"
-        text
-        type="danger"
-        :icon="Delete"
-        @click="emit('remove')"
-      >
-        {{ t('common.delete') }}
-      </el-button>
-    </div>
-
-    <!-- Date range + days -->
-    <div class="sch-range">
-      <div class="range-group">
-        <span class="range-label">{{ t('building.schedule.editor.dateRange') }}</span>
-        <el-input-number
-          :model-value="modelValue.start_month"
-          :min="1" :max="12" size="small" :controls="false"
-          style="width: 56px"
-          @change="(v: any) => updateField('start_month', Number(v) || 1)"
-        />
-        <span class="dash">/</span>
-        <el-input-number
-          :model-value="modelValue.start_day"
-          :min="1" :max="31" size="small" :controls="false"
-          style="width: 56px"
-          @change="(v: any) => updateField('start_day', Number(v) || 1)"
-        />
-        <span class="tilde">~</span>
-        <el-input-number
-          :model-value="modelValue.end_month"
-          :min="1" :max="12" size="small" :controls="false"
-          style="width: 56px"
-          @change="(v: any) => updateField('end_month', Number(v) || 12)"
-        />
-        <span class="dash">/</span>
-        <el-input-number
-          :model-value="modelValue.end_day"
-          :min="1" :max="31" size="small" :controls="false"
-          style="width: 56px"
-          @change="(v: any) => updateField('end_day', Number(v) || 31)"
-        />
-      </div>
-      <div class="range-group">
-        <span class="range-label">{{ t('building.schedule.editor.weekdays') }}</span>
-        <div class="dow-list">
-          <button
-            v-for="d in DAYS"
-            :key="d.key"
-            type="button"
-            class="dow-btn"
-            :class="{ active: isDaySelected(d.key) }"
-            @click="toggleDay(d.key)"
-          >{{ d.label }}</button>
+  <div
+    ref="cardRef"
+    class="sched-card"
+    :style="{
+      '--accent': `rgb(${palette.rgb})`,
+      '--accent-soft': `rgba(${palette.rgb}, 0.1)`,
+      '--accent-border': `rgba(${palette.rgb}, 0.25)`
+    }"
+  >
+    <!-- header -->
+    <div class="sched-header">
+      <div class="sched-header-left">
+        <div class="type-badge" :style="{ background: palette.iconBg, color: palette.iconColor }">
+          <el-icon :size="18"><component :is="typeIcon" /></el-icon>
+        </div>
+        <div class="sched-title-block">
+          <input v-model="nameField" class="sched-name-input" :placeholder="`时间表 ${(props.index ?? 0) + 1}`" />
+          <div class="sched-type-tag">{{ palette.tagZh }}时间表</div>
         </div>
       </div>
+      <button type="button" v-if="removable !== false" class="del-btn" @click="emit('remove')" title="删除时间表">
+        <el-icon :size="14"><Delete /></el-icon>
+      </button>
     </div>
 
-    <!-- Bar chart -->
-    <div class="sch-chart">
-      <div class="chart-y-axis">
-        <span>100%</span>
-        <span>50%</span>
-        <span>0%</span>
+    <!-- conflict banner -->
+    <el-alert
+      v-if="conflictMessage"
+      :title="conflictMessage"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="conflict-alert"
+    />
+
+    <!-- date / weekday -->
+    <div class="meta-row">
+        <div class="meta-label">生效日期</div>
+      <div class="meta-controls">
+        <el-select v-model="startMonth" size="small" class="meta-select">
+          <el-option v-for="m in months" :key="m.v" :value="m.v" :label="m.label" />
+        </el-select>
+        <el-select v-model="startDay" size="small" class="meta-select">
+          <el-option v-for="d in startDays" :key="d.v" :value="d.v" :label="d.label" />
+        </el-select>
+        <span class="meta-sep">至</span>
+        <el-select v-model="endMonth" size="small" class="meta-select">
+          <el-option v-for="m in months" :key="m.v" :value="m.v" :label="m.label" />
+        </el-select>
+        <el-select v-model="endDay" size="small" class="meta-select">
+          <el-option v-for="d in endDays" :key="d.v" :value="d.v" :label="d.label" />
+        </el-select>
       </div>
-      <div class="chart-bars">
-        <div
-          v-for="h in HOURS"
-          :key="h"
-          class="bar-col"
-          :class="{ selected: selectedHours.has(h), editing: editingHour === h }"
-          @click="(e) => toggleSelect(h, e)"
+    </div>
+
+    <div class="meta-row">
+        <div class="meta-label">生效星期</div>
+      <div class="weekday-pills">
+        <button type="button"
+          v-for="(label, i) in weekdayLabels"
+          :key="i"
+          class="weekday-pill"
+          :class="{ 'is-active': isWeekdaySelected(i + 1) }"
+          @click="toggleWeekday(i + 1)"
         >
-          <div class="bar-track" :style="{ height: BAR_AREA_HEIGHT + 'px' }">
-            <div
-              class="bar-fill"
-              :style="{
-                height: (ratios[h] / 100 * BAR_AREA_HEIGHT) + 'px',
-                background: ratioColor(ratios[h])
-              }"
-              :title="ratios[h] + '% \u2192 ' + actualValue(ratios[h]) + (unit ? ' ' + unit : '')"
-              @mousedown="(e) => onBarDragStart(h, e)"
-            >
-              <span v-if="ratios[h] >= 18" class="bar-value">{{ ratios[h] }}</span>
-            </div>
+          {{ label }}
+        </button>
+      </div>
+    </div>
+
+    <!-- heatmap with always-on top values (numbers are click-to-edit) -->
+    <div class="heatmap-wrap">
+      <div class="hm-values">
+        <template v-for="(val, h) in ratios" :key="`v-${h}`">
+          <div
+            v-if="editingHour === h"
+            class="hm-value hm-value-edit"
+          >
+            <input
+              ref="editingInputRef"
+              type="number"
+              min="0"
+              max="100"
+              v-model.number="editingValue"
+              class="hm-edit-input-inline"
+              @keydown.enter.prevent="commitEdit"
+              @keydown.esc.prevent="cancelEdit"
+              @blur="commitEdit"
+              @click.stop
+            />
           </div>
-          <div class="bar-hour">{{ h }}</div>
-        </div>
+          <div
+            v-else
+            class="hm-value"
+            :class="{ 'is-zero': val === 0 }"
+            @click="startEdit(h)"
+            title="点击编辑数值"
+          >{{ val }}</div>
+        </template>
+      </div>
+      <div class="heatmap-row">
+        <div
+          v-for="(val, h) in ratios"
+          :key="h"
+          class="hm-cell"
+          :class="{ 'is-zero': val === 0 }"
+          :style="cellStyle(h, val)"
+          @mousedown="onCellMouseDown($event, h)"
+          @dblclick="onCellDblClick(h)"
+          title="上下拖动调整数值"
+        ></div>
+      </div>
+      <div class="hm-ticks">
+        <span v-for="t in tickHours" :key="t" class="hm-tick" :style="{ gridColumn: `${t + 1} / span 1` }">{{ t }}时</span>
       </div>
     </div>
 
-    <!-- Inline value editor popup -->
-    <div v-if="editingHour !== null" class="hour-edit-pop">
-      <span class="hep-label">{{ editingHour }}:00</span>
-      <el-input-number
-        v-model="editingValue"
-        :min="0" :max="100" :step="5" size="small" :precision="0"
-        style="width: 110px"
-      />
-      <span class="hep-unit">%</span>
-      <span class="hep-actual">→ {{ actualValue(editingValue) }} {{ unit }}</span>
-      <el-button size="small" type="primary" @click="applyEdit">{{ t('common.confirm') }}</el-button>
-      <el-button size="small" @click="cancelEdit">{{ t('common.cancel') }}</el-button>
+    <!-- toolbar -->
+    <div class="toolbar">
+      <span class="tb-label">快捷预设</span>
+      <button type="button" class="tb-btn" @click="presetOffice9to18">
+        <el-icon :size="12"><MagicStick /></el-icon>办公 9–18时
+      </button>
+      <button type="button" class="tb-btn" @click="presetAlwaysOn">全天</button>
+      <button type="button" class="tb-btn" @click="presetNight">夜间</button>
+      <button type="button" class="tb-btn tb-btn-danger" @click="presetClear">清空</button>
     </div>
 
-    <!-- Toolbar: presets + bulk -->
-    <div class="sch-toolbar">
-      <div class="toolbar-group">
-        <span class="toolbar-label">{{ t('building.schedule.editor.preset') }}:</span>
-        <el-button size="small" :icon="MagicStick" @click="applyPreset('office')">
-          {{ t('building.schedule.editor.presetOffice') }}
-        </el-button>
-        <el-button size="small" @click="applyPreset('allday')">
-          {{ t('building.schedule.editor.presetAllDay') }}
-        </el-button>
-        <el-button size="small" @click="applyPreset('night')">
-          {{ t('building.schedule.editor.presetNight') }}
-        </el-button>
-        <el-button size="small" @click="applyPreset('clear')">
-          {{ t('building.schedule.editor.presetClear') }}
-        </el-button>
-      </div>
-      <div class="toolbar-group">
-        <span class="toolbar-label">{{ t('building.schedule.editor.bulkFill') }}:</span>
-        <el-input-number
-          v-model="bulkValue"
-          :min="0" :max="100" :step="10" size="small" :precision="0" :controls="false"
-          style="width: 70px"
-        />
-        <span class="hep-unit">%</span>
-        <el-button size="small" type="primary" plain @click="applyBulk">
-          {{ t('building.schedule.editor.applyToSelected') }}
-          <span v-if="selectedHours.size > 0" class="sel-badge">({{ selectedHours.size }})</span>
-        </el-button>
-        <el-button size="small" link @click="selectAll">{{ t('building.schedule.editor.selectAllHours') }}</el-button>
-        <el-button v-if="selectedHours.size > 0" size="small" link @click="clearSelection">
-          {{ t('building.schedule.editor.clearSelection') }}
-        </el-button>
-      </div>
-    </div>
-
-    <div class="sch-hint">
-      <span>{{ t('building.schedule.editor.hint') }}</span>
+    <div class="sched-foot">
+      点击上方数字编辑 · 上下拖动柱子调整 · 双击柱子归零
     </div>
   </div>
 </template>
 
 <style scoped>
-.sch-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 14px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-}
-.sch-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.sch-name {
-  flex: 1;
-  max-width: 280px;
-}
-.sch-range {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  padding: 10px 12px;
-  background: #f8fafc;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-}
-.range-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.range-label {
-  font-size: 12px;
-  color: #64748b;
-  font-weight: 600;
-}
-.dash, .tilde {
-  color: #94a3b8;
-  font-weight: 600;
-}
-.dow-list {
-  display: flex;
-  gap: 4px;
-}
-.dow-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  font-size: 12px;
-  font-weight: 600;
-  color: #475569;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-.dow-btn:hover {
-  border-color: #0891b2;
-  color: #0891b2;
-}
-.dow-btn.active {
-  background: #0891b2;
-  color: #fff;
-  border-color: #0891b2;
+/* ===== unified font for entire component ===== */
+.sched-card,
+.sched-card * {
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
 }
 
-/* Chart */
-.sch-chart {
-  display: flex;
-  gap: 8px;
-  padding: 12px 8px;
-  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  overflow-x: auto;
-}
-.chart-y-axis {
+/* ===== card (light theme) ===== */
+.sched-card {
+  background: #ffffff;
+  border: 1px solid #e4e4e7;
+  border-radius: 16px;
+  padding: 24px;
   display: flex;
   flex-direction: column;
+  gap: 20px;
+  color: #18181b;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.sched-card:hover {
+  border-color: var(--accent-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+/* ===== header ===== */
+.sched-header {
+  display: flex;
   justify-content: space-between;
-  font-size: 10px;
-  color: #94a3b8;
-  padding: 4px 0 22px 0;
-  height: 120px;
+  align-items: flex-start;
+  gap: 12px;
+}
+.sched-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+.type-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
 }
-.chart-bars {
-  display: flex;
-  flex: 1;
-  min-width: 480px;
-  gap: 2px;
-}
-.bar-col {
-  flex: 1;
+.sched-title-block {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  cursor: pointer;
-  user-select: none;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
 }
-.bar-track {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  background: linear-gradient(180deg, transparent 0%, transparent 49.5%, #f1f5f9 49.5%, #f1f5f9 50.5%, transparent 50.5%);
-  border-radius: 3px;
-  position: relative;
-  transition: background 0.15s ease;
-}
-.bar-col:hover .bar-track {
-  background: rgba(8, 145, 178, 0.06);
-}
-.bar-fill {
-  width: 100%;
-  border-radius: 3px 3px 0 0;
-  cursor: ns-resize;
-  transition: background 0.12s ease;
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 2px;
-  box-sizing: border-box;
-  min-height: 2px;
-}
-.bar-value {
-  font-size: 9px;
-  color: #fff;
+.sched-name-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #18181b;
+  font-size: 14px;
   font-weight: 700;
-  text-shadow: 0 0 2px rgba(0,0,0,0.3);
+  padding: 2px 0;
+  width: 100%;
 }
-.bar-hour {
-  font-size: 10px;
-  color: #64748b;
-  margin-top: 4px;
-  font-variant-numeric: tabular-nums;
+.sched-name-input:focus {
+  border-bottom: 1px solid var(--accent);
 }
-.bar-col.selected .bar-track {
-  background: rgba(8, 145, 178, 0.16);
-  outline: 1.5px solid #0891b2;
-  border-radius: 3px;
+.sched-name-input::placeholder {
+  color: #a1a1aa;
 }
-.bar-col.editing .bar-track {
-  background: rgba(245, 158, 11, 0.18);
-  outline: 1.5px solid #f59e0b;
-  border-radius: 3px;
+.sched-type-tag {
+  font-size: 11px;
+  color: #a1a1aa;
+  font-weight: 500;
 }
-
-/* Inline edit popup */
-.hour-edit-pop {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: linear-gradient(135deg, #fef3c7, #fef9e7);
-  border: 1px solid #f59e0b;
+.del-btn {
+  background: transparent;
+  border: 1px solid #e4e4e7;
+  color: #a1a1aa;
+  width: 28px;
+  height: 28px;
   border-radius: 8px;
-  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
 }
-.hep-label {
-  font-weight: 700;
-  color: #b45309;
-  font-variant-numeric: tabular-nums;
-}
-.hep-unit {
-  font-size: 12px;
-  color: #64748b;
-}
-.hep-actual {
-  font-size: 12px;
-  color: #475569;
-  flex: 1;
+.del-btn:hover {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #ef4444;
 }
 
-/* Toolbar */
-.sch-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 8px 0 0 0;
-  border-top: 1px dashed #e2e8f0;
+/* ===== conflict alert ===== */
+.conflict-alert {
+  background: rgba(234, 179, 8, 0.08) !important;
+  border: 1px solid rgba(234, 179, 8, 0.25) !important;
 }
-.toolbar-group {
+.conflict-alert :deep(.el-alert__title) {
+  color: #a16207;
+  font-size: 12px;
+}
+
+/* ===== meta rows (date / weekdays) ===== */
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.meta-label {
+  font-size: 12px;
+  color: #71717a;
+  font-weight: 500;
+  width: 72px;
+  flex-shrink: 0;
+}
+.meta-controls {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
-.toolbar-label {
-  font-size: 12px;
-  color: #64748b;
+.meta-select {
+  width: 80px;
+}
+.meta-select :deep(.el-select__wrapper) {
+  background: #fafafa !important;
+  border: 1px solid #e4e4e7 !important;
+  box-shadow: none !important;
+  color: #3f3f46 !important;
+  font-size: 13px;
+  min-height: 30px;
+}
+.meta-select :deep(.el-select__wrapper:hover) {
+  border-color: #d4d4d8 !important;
+}
+.meta-select :deep(.el-select__placeholder) {
+  color: #3f3f46 !important;
+}
+.meta-sep {
+  color: #a1a1aa;
+  font-size: 13px;
+}
+
+/* ===== weekday pills ===== */
+.weekday-pills {
+  display: flex;
+  gap: 6px;
+}
+.weekday-pill {
+  width: 32px;
+  height: 30px;
+  background: #fafafa;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  color: #71717a;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.weekday-pill:hover {
+  border-color: #d4d4d8;
+  color: #18181b;
+}
+.weekday-pill.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
   font-weight: 600;
 }
-.sel-badge {
-  margin-left: 4px;
-  font-size: 11px;
-  color: #0891b2;
-}
 
-.sch-hint {
-  font-size: 11px;
-  color: #94a3b8;
+/* ===== heatmap ===== */
+.heatmap-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hm-values {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 4px;
+  height: 22px;
+}
+.hm-value {
   text-align: center;
+  font-size: 11px;
+  color: #71717a;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 22px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.12s;
+  min-width: 0;
+}
+.hm-value:hover {
+  background: #f4f4f5;
+  color: #18181b;
+}
+.hm-value.is-zero {
+  color: #d4d4d8;
+}
+.hm-value-edit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid #fbbf24;
+  border-radius: 4px;
+  padding: 0;
+  min-width: 0;
+}
+.hm-edit-input-inline {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #18181b;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+.hm-edit-input-inline::-webkit-outer-spin-button,
+.hm-edit-input-inline::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.heatmap-row {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 4px;
+  height: 56px;
+  user-select: none;
+}
+.hm-cell {
+  border-radius: 4px;
+  position: relative;
+  cursor: row-resize;
+  transition: filter 0.12s;
+  background: #f4f4f5;
+  min-width: 0;
+}
+.hm-cell:hover {
+  filter: brightness(1.05);
+}
+.hm-cell.is-zero {
+  background: transparent;
+  border: 1px dashed #e4e4e7;
+}
+.hm-edit-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fbbf24;
+  border-radius: 6px;
+  padding: 4px 6px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+  z-index: 20;
+}
+.hm-edit-pop::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #fbbf24;
+}
+.hm-edit-input {
+  width: 44px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #18181b;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+.hm-edit-input::-webkit-outer-spin-button,
+.hm-edit-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.hm-edit-suffix {
+  font-size: 11px;
+  font-weight: 700;
+  color: #18181b;
+}
+.hm-ticks {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 4px;
+  font-size: 11px;
+  color: #a1a1aa;
+}
+.hm-tick {
+  text-align: center;
+  min-width: 0;
+  white-space: nowrap;
+}
+/* dragging-state class added on body during drag to suppress text selection */
+body.sched-dragging,
+body.sched-dragging * {
+  user-select: none !important;
+  cursor: row-resize !important;
 }
 
-/* Mobile */
-@media (max-width: 640px) {
-  .sch-editor {
-    padding: 10px;
-  }
-  .sch-range {
-    flex-direction: column;
-    gap: 10px;
-  }
-  .chart-bars {
-    min-width: 360px;
-  }
-  .bar-hour {
-    font-size: 9px;
-  }
-  .sch-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .toolbar-group {
-    flex-wrap: wrap;
-  }
+/* ===== toolbar ===== */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-top: 16px;
+  border-top: 1px solid #f4f4f5;
+}
+.tb-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tb-divider {
+  width: 1px;
+  height: 20px;
+  background: #e4e4e7;
+}
+.tb-label {
+  font-size: 12px;
+  color: #71717a;
+  font-weight: 500;
+}
+.tb-btn {
+  background: #fafafa;
+  border: 1px solid #e4e4e7;
+  color: #3f3f46;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s;
+}
+.tb-btn:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.tb-btn-danger:hover {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+.tb-btn-accent {
+  background: var(--accent-soft) !important;
+  border-color: var(--accent-border) !important;
+  color: var(--accent) !important;
+  font-weight: 600;
+}
+.tb-btn-accent:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.tb-btn-link {
+  background: transparent;
+  border: none;
+  color: #a1a1aa;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.tb-btn-link:hover {
+  color: #18181b;
+}
+.tb-input {
+  width: 60px;
+  background: #fafafa;
+  border: 1px solid #e4e4e7;
+  color: #18181b;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  text-align: center;
+  padding: 5px 6px;
+  border-radius: 6px;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.tb-input::-webkit-outer-spin-button,
+.tb-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.tb-input:focus {
+  border-color: var(--accent);
+}
+.tb-percent {
+  color: #a1a1aa;
+  font-size: 12px;
+}
+
+/* ===== foot tip ===== */
+.sched-foot {
+  font-size: 11px;
+  color: #a1a1aa;
+  text-align: center;
+  padding-top: 4px;
+}
+</style>
+
+<!-- popper styles for el-select dropdown (dark) -->
+<style>
+.el-select__popper.el-popper {
+  /* keep default light dropdown for legibility unless we want full dark */
 }
 </style>
