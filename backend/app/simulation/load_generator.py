@@ -122,6 +122,12 @@ def resolve_param(
         return fixed_value
     for sched in param.get("schedules", []):
         if _schedule_matches(sched, month, dom, dow, hod):
+            ratios = sched.get("hourly_ratios")
+            if isinstance(ratios, list) and len(ratios) == 24:
+                try:
+                    return fixed_value * (float(ratios[hod]) / 100.0)
+                except (TypeError, ValueError):
+                    pass
             return sched.get("value", fixed_value)
     return fixed_value
 

@@ -7,18 +7,35 @@
   padding: 0;
 }
 
+:root {
+  --app-bg: #f1f5f9;
+  --app-bg-elevated: rgba(255, 255, 255, 0.82);
+  --app-text: #1e293b;
+  --app-muted: #64748b;
+  --app-border: rgba(226, 232, 240, 0.65);
+  --app-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --el-color-primary: #0891b2;
+  --el-color-primary-light-3: #22d3ee;
+  --el-color-primary-light-5: #67e8f9;
+  --el-color-primary-light-7: #a5f3fc;
+  --el-color-primary-light-8: #cffafe;
+  --el-color-primary-light-9: #ecfeff;
+  --el-color-primary-dark-2: #0e7490;
+}
+
+html {
+  background: var(--app-bg);
+}
+
 body {
   font-family: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  color: #1e293b;
-  background: #f1f5f9;
+  color: var(--app-text);
+  background: var(--app-bg);
   min-height: 100vh;
   min-height: 100dvh;
-}
-
-html {
-  background: #f1f5f9;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 /* Custom scrollbar */
@@ -87,15 +104,114 @@ html {
   border-radius: 8px;
 }
 
-/* Element Plus primary color override to cyan-600 */
-:root {
-  --el-color-primary: #0891b2;
-  --el-color-primary-light-3: #22d3ee;
-  --el-color-primary-light-5: #67e8f9;
-  --el-color-primary-light-7: #a5f3fc;
-  --el-color-primary-light-8: #cffafe;
-  --el-color-primary-light-9: #ecfeff;
-  --el-color-primary-dark-2: #0e7490;
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --app-bg: #0b1120;
+  --app-bg-elevated: rgba(15, 23, 42, 0.78);
+  --app-text: #e2e8f0;
+  --app-muted: #94a3b8;
+  --app-border: rgba(71, 85, 105, 0.55);
+  --app-shadow: 0 10px 30px rgba(2, 6, 23, 0.35);
+}
+
+html[data-theme='dark'] body {
+  background:
+    radial-gradient(circle at top left, rgba(8, 145, 178, 0.15), transparent 28%),
+    radial-gradient(circle at top right, rgba(124, 58, 237, 0.12), transparent 24%),
+    #0b1120;
+  color: var(--app-text);
+}
+
+html[data-theme='dark'] .el-card {
+  --el-card-bg-color: rgba(15, 23, 42, 0.72) !important;
+  border: 1px solid var(--app-border) !important;
+  box-shadow: var(--app-shadow) !important;
+}
+
+html[data-theme='dark'] .el-dialog,
+html[data-theme='dark'] .el-table,
+html[data-theme='dark'] .top-bar,
+html[data-theme='dark'] .bcard,
+html[data-theme='dark'] .b-row,
+html[data-theme='dark'] .b-card,
+html[data-theme='dark'] .scheme,
+html[data-theme='dark'] .zone-table-card,
+html[data-theme='dark'] .zone-card {
+  background: rgba(15, 23, 42, 0.78) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
+}
+
+html[data-theme='dark'] .project-hero,
+html[data-theme='dark'] .page-hero,
+html[data-theme='dark'] .viz-hero,
+html[data-theme='dark'] .page-header {
+  background: linear-gradient(135deg, rgba(8, 47, 73, 0.92) 0%, rgba(30, 41, 59, 0.95) 55%, rgba(49, 46, 129, 0.92) 100%) !important;
+  border-color: rgba(56, 189, 248, 0.22) !important;
+}
+
+html[data-theme='dark'] .ws-layout,
+html[data-theme='dark'] .ws-main,
+html[data-theme='dark'] .ws-content {
+  background: transparent !important;
+}
+
+html[data-theme='dark'] .ws-side {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.94) 0%, rgba(15, 23, 42, 0.86) 100%) !important;
+  border-right-color: rgba(71, 85, 105, 0.55) !important;
+}
+
+html[data-theme='dark'] .ws-proj-card,
+html[data-theme='dark'] .ws-item {
+  background: rgba(15, 23, 42, 0.72) !important;
+  border-color: rgba(71, 85, 105, 0.45) !important;
+}
+
+html[data-theme='dark'] .ws-item.active {
+  box-shadow: 0 8px 18px rgba(8, 145, 178, 0.16) !important;
+}
+
+html[data-theme='dark'] .ws-proj-name,
+html[data-theme='dark'] .ws-item-title,
+html[data-theme='dark'] .ws-back {
+  color: #e2e8f0 !important;
+}
+
+html[data-theme='dark'] .ws-proj-loc,
+html[data-theme='dark'] .ws-stage-label,
+html[data-theme='dark'] .ws-item-desc {
+  color: #94a3b8 !important;
+}
+
+html[data-theme='dark'] .hero-title,
+html[data-theme='dark'] .section-header h2,
+html[data-theme='dark'] .bcard-name,
+html[data-theme='dark'] .stat-value,
+html[data-theme='dark'] .b-name,
+html[data-theme='dark'] .scheme-name,
+html[data-theme='dark'] .viz-hero h2,
+html[data-theme='dark'] .page-hero h1,
+html[data-theme='dark'] .page-header h1 {
+  color: #f8fafc !important;
+}
+
+html[data-theme='dark'] .hero-desc,
+html[data-theme='dark'] .section-hint,
+html[data-theme='dark'] .stat-label,
+html[data-theme='dark'] .scheme-meta,
+html[data-theme='dark'] .sim-label,
+html[data-theme='dark'] .tb-btn {
+  color: #94a3b8 !important;
+}
+
+html[data-theme='dark'] .stat-item {
+  background: rgba(15, 23, 42, 0.92) !important;
+  border-color: rgba(71, 85, 105, 0.45) !important;
+}
+
+html[data-theme='dark'] .project-view .el-empty {
+  background: rgba(15, 23, 42, 0.72) !important;
+  border-color: rgba(71, 85, 105, 0.55) !important;
 }
 
 /* ── Mobile responsive ── */

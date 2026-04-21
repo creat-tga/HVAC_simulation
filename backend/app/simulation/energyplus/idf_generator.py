@@ -770,10 +770,23 @@ def _param_config_schedule(name: str, param: dict[str, Any] | float | int | None
         matrix = [[default] * 24 for _ in range(7)]
         # 根据 schedule 条目填充矩阵
         for entry in entries:
+            ratios = entry.get("hourly_ratios")
             for dow in entry.get("days", list(range(1, 8))):  # days: 1=周一..7=周日
-                for hr in entry.get("hours", list(range(24))): # hours: 0-23
-                    if 0 <= dow - 1 < 7 and 0 <= hr < 24:
-                        matrix[dow - 1][hr] = entry.get("value", fv)
+                if not (0 <= dow - 1 < 7):
+                    continue
+                if isinstance(ratios, list) and len(ratios) == 24:
+                    # 优先使用 hourly_ratios（0-100 of peak/fixed_value）
+                    for hr in range(24):
+                        try:
+                            r = float(ratios[hr])
+                        except (TypeError, ValueError):
+                            r = 0.0
+                        matrix[dow - 1][hr] = fv * (r / 100.0)
+                else:
+                    # 兼容旧格式：hours + 单一 value
+                    for hr in entry.get("hours", list(range(24))):  # hours: 0-23
+                        if 0 <= hr < 24:
+                            matrix[dow - 1][hr] = entry.get("value", fv)
 
         # 合并相同的日型以减少对象数量
         unique: dict[tuple[float, ...], str] = {}

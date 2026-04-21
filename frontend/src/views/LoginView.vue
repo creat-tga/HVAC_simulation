@@ -25,7 +25,7 @@ async function handleLogin() {
   loading.value = true
   try {
     const { data } = await login(form.value)
-    authStore.setAuth(data.access_token, data.username)
+    authStore.setAuth(data.access_token, data.username, data.role)
     ElMessage.success('登录成功')
     router.push('/')
   } catch {
@@ -76,6 +76,9 @@ async function handleLogin() {
             登录
           </el-button>
         </el-form-item>
+        <div class="register-hint">
+          还没有账号？<el-link type="primary" @click="router.push('/register')">立即注册</el-link>
+        </div>
       </el-form>
     </div>
   </div>
@@ -159,6 +162,13 @@ async function handleLogin() {
 
 .login-form {
   margin-top: 20px;
+}
+
+.register-hint {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+  margin-top: -4px;
 }
 
 /* Override Element Plus input styles for dark login */

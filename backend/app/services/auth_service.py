@@ -56,11 +56,44 @@ async def seed_admin(db: AsyncSession) -> None:
     """Create default admin user if not exists."""
     existing = await get_user_by_username(db, "admin")
     if existing:
+        # Make sure existing admin has admin role
+        if existing.role != "admin":
+            existing.role = "admin"
+            existing.status = "active"
+            await db.commit()
         return
     admin = User(
         id=uuid.uuid4(),
         username="admin",
         password_hash=hash_password("123456"),
+        role="admin",
+        status="active",
+        is_active=True,
+        full_name="超级管理员",
     )
     db.add(admin)
     await db.commit()
+
+
+async def log_user_activity(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    action: str,
+    target: str | None = None,
+    detail: str | None = None,
+    ip_address: str | None = None,
+) -> None:
+    """Append an activity log entry. Best-effort, swallow errors."""
+    try:
+        from app.models.user import UserActivityLog
+        log = UserActivityLog(
+            user_id=user_id,
+            action=action,
+            target=target,
+            detail=detail,
+            ip_address=ip_address,
+        )
+        db.add(log)
+        await db.commit()
+    except Exception:
+        await db.rollback()

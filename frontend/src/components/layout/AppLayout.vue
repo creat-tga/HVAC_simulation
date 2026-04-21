@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
@@ -9,6 +9,8 @@ import { useResponsive } from '@/composables/useResponsive'
 
 const { isMobile, sidebarOpen, closeSidebar } = useResponsive()
 const route = useRoute()
+
+const hideAppSidebar = computed(() => !!route.meta.noSidebar)
 
 // Close sidebar on navigation in mobile
 watch(() => route.fullPath, () => {
@@ -21,11 +23,11 @@ watch(() => route.fullPath, () => {
     <AppHeader />
     <el-container class="app-body">
       <!-- Desktop sidebar -->
-      <AppSidebar v-if="!isMobile" />
+      <AppSidebar v-if="!isMobile && !hideAppSidebar" />
 
       <!-- Mobile drawer -->
       <el-drawer
-        v-if="isMobile"
+        v-if="isMobile && !hideAppSidebar"
         v-model="sidebarOpen"
         direction="ltr"
         :size="260"
@@ -37,12 +39,12 @@ watch(() => route.fullPath, () => {
       </el-drawer>
 
       <!-- Overlay when drawer is open -->
-      <div v-if="isMobile && sidebarOpen" class="mobile-overlay" @click="closeSidebar" />
+      <div v-if="isMobile && sidebarOpen && !hideAppSidebar" class="mobile-overlay" @click="closeSidebar" />
 
       <el-main>
         <ParticleBg />
-        <BreadcrumbNav />
-        <div class="main-content">
+        <BreadcrumbNav v-if="!hideAppSidebar" />
+        <div class="main-content" :class="{ 'no-padding': hideAppSidebar }">
           <slot />
         </div>
       </el-main>
@@ -78,6 +80,17 @@ watch(() => route.fullPath, () => {
   overflow: auto;
   padding: 20px;
   min-height: 100%;
+}
+
+.main-content.no-padding {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+.main-content.no-padding > * {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Mobile */

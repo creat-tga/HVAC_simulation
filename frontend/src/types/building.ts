@@ -5,12 +5,16 @@ export interface DaySchedule {
   end_month: number     // 1-12
   end_day: number       // 1-31
   days: number[]        // 1=Mon, 2=Tue, ..., 7=Sun
-  hours: number[]       // 0-23, which hours have this value
-  value: number         // single parameter value
+  hours: number[]       // 0-23, which hours have this value (legacy, derivable from hourly_ratios)
+  value: number         // single parameter value (legacy)
+  /** 24-length array, each 0-100 representing % of peak/fixed_value. Preferred over hours+value. */
+  hourly_ratios?: number[]
 }
 
 export interface ParamConfig {
+  /** 'fixed' = constant peak value; 'scheduled' = schedule list with per-hour ratios */
   mode: 'fixed' | 'scheduled'
+  /** Peak/design value. Acts as the 100% reference for hourly_ratios. */
   fixed_value: number
   schedules: DaySchedule[]
 }

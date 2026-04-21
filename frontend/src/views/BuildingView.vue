@@ -9,6 +9,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Edit, Plus, Delete, ArrowDown, CopyDocument, FolderAdd } from '@element-plus/icons-vue'
 import { ZONE_PRESETS, PRESET_KEYS } from '@/data/zone-presets'
 import { useResponsive } from '@/composables/useResponsive'
+import ScheduleEditor from '@/components/building/ScheduleEditor.vue'
 
 const { isMobile } = useResponsive()
 
@@ -50,6 +51,18 @@ const SETPOINT_METAS: ParamMeta[] = [
 
 function getParam(zone: BuildingZone, key: string): ParamConfig {
   return (zone as any)[key] as ParamConfig
+}
+
+const PARAM_UNITS: Record<string, string> = {
+  people_density: '人/m²',
+  lighting_density: 'W/m²',
+  equipment_density: 'W/m²',
+  fresh_air_volume: 'm³/h·人',
+  temperature: '℃',
+  relative_humidity: '%',
+}
+function paramUnit(key: string): string {
+  return PARAM_UNITS[key] || ''
 }
 
 function createParamConfig(val: number): ParamConfig {
@@ -117,6 +130,62 @@ function applyPreset(presetKey: string) {
 
 // ----- Schedule helpers -----
 const MAX_SCHEDULES = 20
+
+/** Internal-gain param keys (for new bar-chart editor) */
+const INTERNAL_GAIN_KEYS = ['people_density', 'lighting_density', 'equipment_density', 'fresh_air_volume']
+
+/** Create a fully-on (24h @ 100%) schedule with hourly_ratios */
+function createRatiosSchedule(name = ''): DaySchedule {
+  return {
+    name,
+    start_month: 1, start_day: 1, end_month: 12, end_day: 31,
+    days: [1, 2, 3, 4, 5, 6, 7],
+    hours: Array.from({ length: 24 }, (_, i) => i),
+    value: 0,
+    hourly_ratios: new Array(24).fill(100),
+  }
+}
+
+/** Create an office-pattern schedule (9-18 @ 100%) */
+function createOfficeRatiosSchedule(name = ''): DaySchedule {
+  const ratios = new Array(24).fill(0) as number[]
+  for (let h = 9; h <= 18; h++) ratios[h] = 100
+  ratios[8] = 50; ratios[19] = 30
+  return {
+    name,
+    start_month: 1, start_day: 1, end_month: 12, end_day: 31,
+    days: [1, 2, 3, 4, 5],
+    hours: Array.from({ length: 24 }, (_, i) => i),
+    value: 0,
+    hourly_ratios: ratios,
+  }
+}
+
+/** Ensure an internal-gain ParamConfig is in scheduled mode with at least 1 schedule */
+function normalizeInternalGainParam(p: ParamConfig): void {
+  if (!p) return
+  // Force scheduled mode (no more 'fixed' for internal gains)
+  p.mode = 'scheduled'
+  if (!Array.isArray(p.schedules) || p.schedules.length === 0) {
+    p.schedules = [createOfficeRatiosSchedule(t('building.schedule.presetWeekday'))]
+  }
+}
+
+function addScheduleForParam(param: ParamConfig) {
+  if (param.schedules.length >= MAX_SCHEDULES) {
+    ElMessage.warning(t('building.schedule.maxGroupsHint', { max: MAX_SCHEDULES }))
+    return
+  }
+  param.schedules.push(createRatiosSchedule(t('building.schedule.dayGroupName') + ' ' + (param.schedules.length + 1)))
+}
+
+function removeScheduleAt(param: ParamConfig, idx: number) {
+  param.schedules.splice(idx, 1)
+  if (param.schedules.length === 0) {
+    // Always keep at least one — re-add a default
+    param.schedules.push(createOfficeRatiosSchedule(t('building.schedule.presetWeekday')))
+  }
+}
 
 function addDayGroup(param: ParamConfig) {
   if (param.schedules.length >= MAX_SCHEDULES) {
@@ -304,8 +373,35 @@ const batchAddVisible = ref(false)
 const batchAddCount = ref(3)
 const batchAddName = ref('')
 
-function handleSelectionChange(rows: BuildingZone[]) {
-  selectedRows.value = rows
+function isZoneSelected(zone: BuildingZone): boolean {
+  return selectedRows.value.includes(zone)
+}
+
+function toggleZoneSelect(zone: BuildingZone, checked: any) {
+  if (checked) {
+    if (!selectedRows.value.includes(zone)) selectedRows.value.push(zone)
+  } else {
+    selectedRows.value = selectedRows.value.filter(z => z !== zone)
+  }
+}
+
+const allPagedSelected = computed(() => {
+  return pagedZones.value.length > 0 && pagedZones.value.every(z => selectedRows.value.includes(z))
+})
+
+const someSelected = computed(() =>
+  selectedRows.value.length > 0 && !allPagedSelected.value
+)
+
+function toggleAllPaged(checked: any) {
+  if (checked) {
+    const set = new Set(selectedRows.value)
+    pagedZones.value.forEach(z => set.add(z))
+    selectedRows.value = Array.from(set)
+  } else {
+    const pset = new Set(pagedZones.value)
+    selectedRows.value = selectedRows.value.filter(z => !pset.has(z))
+  }
 }
 
 function handleRowClick(row: BuildingZone) {
@@ -513,6 +609,12 @@ onMounted(async () => {
       relative_humidity: createParamConfig(50),
     }]
   }
+  // Migrate internal-gain params to scheduled mode (with default schedule if empty)
+  for (const z of editZones.value) {
+    for (const k of INTERNAL_GAIN_KEYS) {
+      normalizeInternalGainParam((z as any)[k])
+    }
+  }
   nextTick(() => {
     savedVersion.value = editVersion.value
     // Allow dirty detection after initial load settles (debounce is 500ms)
@@ -660,69 +762,93 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
         </div>
       </template>
 
-      <el-table :data="pagedZones" size="small" stripe highlight-current-row
-        @selection-change="handleSelectionChange"
-        @row-click="handleRowClick"
-        :row-class-name="({row}: {row: BuildingZone, rowIndex: number}) => editZones.indexOf(row) === selectedZoneIdx ? 'current-zone-row' : ''">
-        <el-table-column type="selection" :width="isMobile ? 32 : 40" />
-        <el-table-column label="#" :width="isMobile ? 32 : 40">
-          <template #default="{ $index }">{{ (currentPage - 1) * pageSize + $index + 1 }}</template>
-        </el-table-column>
-        <el-table-column :label="t('building.zone.name')" min-width="100">
-          <template #default="{ row }">
-            <el-input v-model="row.name" size="small" :placeholder="t('building.zone.pleaseInputName')" />
-            <span v-if="isMobile" class="mobile-zone-area">{{ row.area }} m²</span>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!isMobile" :label="t('building.zone.area')" width="110">
-          <template #default="{ row }">
-            <el-input-number v-model="row.area" :min="0.1" :max="9999.9" :precision="1" size="small" :controls="false" style="width: 100%" />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!isMobile" :label="t('building.zone.floorHeight')" width="90">
-          <template #default="{ row }">
-            <el-input-number v-model="row.floor_height" :min="1" :max="100" :precision="1" size="small" :controls="false" style="width: 100%" />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!isMobile" :label="t('building.envelope.zonePosition')" min-width="120">
-          <template #default="{ row }">
-            <el-select v-model="row.zone_position" size="small" style="width: 100%">
-              <el-option value="single" :label="t('building.envelope.position.single')" />
-              <el-option value="top" :label="t('building.envelope.position.top')" />
-              <el-option value="middle" :label="t('building.envelope.position.middle')" />
-              <el-option value="bottom" :label="t('building.envelope.position.bottom')" />
-            </el-select>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!isMobile" :label="t('building.envelope.wallU')" width="90">
-          <template #default="{ row }">
-            <el-input-number v-model="row.wall_u_value" :min="0.01" :max="20" :precision="2" size="small" :controls="false" style="width: 100%" />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!isMobile" :label="t('building.envelope.windowU')" width="90">
-          <template #default="{ row }">
-            <el-input-number v-model="row.window_u_value" :min="0.1" :max="20" :precision="2" size="small" :controls="false" style="width: 100%" />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!isMobile" :label="t('building.envelope.wwr')" width="70">
-          <template #default="{ row }">
-            <el-input-number v-model="row.window_wall_ratio" :min="0" :max="1" :precision="2" size="small" :controls="false" style="width: 100%" />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!isMobile" :label="t('building.envelope.roofU')" width="90">
-          <template #default="{ row }">
-            <el-input-number v-model="row.roof_u_value" :min="0.01" :max="20" :precision="2" size="small" :controls="false" style="width: 100%" />
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('common.operation')" :width="isMobile ? 100 : 100" :fixed="isMobile ? false : 'right'">
-          <template #default="{ row }">
-            <div :class="isMobile ? 'mobile-ops' : ''">
-              <el-button link type="primary" size="small" @click.stop="copyZone(row)">{{ t('building.zone.copy') }}</el-button>
-              <el-button link type="danger" size="small" @click.stop="removeZone(row)" :disabled="editZones.length <= 1">{{ t('building.zone.delete') }}</el-button>
+      <div class="zone-grid">
+        <div class="zone-grid-toolbar">
+          <el-checkbox
+            :model-value="allPagedSelected"
+            :indeterminate="someSelected"
+            @change="(v: any) => toggleAllPaged(v)"
+          >
+            {{ t('common.selectAll') }}
+            <span v-if="selectedRows.length > 0" class="zg-sel-count">({{ selectedRows.length }})</span>
+          </el-checkbox>
+        </div>
+        <div class="zone-grid-list">
+          <div
+            v-for="(zone, idx) in pagedZones"
+            :key="editZones.indexOf(zone)"
+            class="zone-mini-card"
+            :class="{ active: editZones.indexOf(zone) === selectedZoneIdx, selected: isZoneSelected(zone) }"
+            @click="handleRowClick(zone)"
+          >
+            <div class="zmc-header" @click.stop>
+              <el-checkbox
+                :model-value="isZoneSelected(zone)"
+                @change="(v: any) => toggleZoneSelect(zone, v)"
+              />
+              <span class="zmc-num">#{{ (currentPage - 1) * pageSize + idx + 1 }}</span>
+              <el-input
+                v-model="zone.name"
+                size="small"
+                class="zmc-name"
+                :placeholder="t('building.zone.pleaseInputName')"
+              />
             </div>
-          </template>
-        </el-table-column>
-      </el-table>
+            <div class="zmc-body" @click.stop>
+              <div class="zmc-field">
+                <label>{{ t('building.zone.area') }}</label>
+                <el-input-number
+                  v-model="zone.area"
+                  :min="0.1"
+                  :max="9999.9"
+                  :precision="1"
+                  size="small"
+                  :controls="false"
+                  style="width: 100%"
+                />
+                <span class="zmc-unit">m²</span>
+              </div>
+              <div class="zmc-field">
+                <label>{{ t('building.zone.floorHeight') }}</label>
+                <el-input-number
+                  v-model="zone.floor_height"
+                  :min="1"
+                  :max="100"
+                  :precision="1"
+                  size="small"
+                  :controls="false"
+                  style="width: 100%"
+                />
+                <span class="zmc-unit">m</span>
+              </div>
+              <div class="zmc-field zmc-field--full">
+                <label>{{ t('building.envelope.zonePosition') }}</label>
+                <el-select v-model="zone.zone_position" size="small" style="width: 100%">
+                  <el-option value="single" :label="t('building.envelope.position.single')" />
+                  <el-option value="top" :label="t('building.envelope.position.top')" />
+                  <el-option value="middle" :label="t('building.envelope.position.middle')" />
+                  <el-option value="bottom" :label="t('building.envelope.position.bottom')" />
+                </el-select>
+              </div>
+            </div>
+            <div class="zmc-actions" @click.stop>
+              <el-button link type="primary" size="small" :icon="CopyDocument" @click="copyZone(zone)">
+                {{ t('building.zone.copy') }}
+              </el-button>
+              <el-button
+                link
+                type="danger"
+                size="small"
+                :icon="Delete"
+                :disabled="editZones.length <= 1"
+                @click="removeZone(zone)"
+              >
+                {{ t('building.zone.delete') }}
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
       <el-pagination
         v-if="totalZones > 30"
         v-model:current-page="currentPage"
@@ -791,103 +917,38 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
           </el-col>
         </el-row>
 
-        <!-- Internal Gains -->
+        <!-- Internal Gains (bar-chart schedule editor) -->
         <el-divider content-position="left">{{ t('building.internalGains.title') }}</el-divider>
 
-        <div v-for="pm in PARAM_METAS" :key="pm.key" class="param-row">
-          <div class="param-header">
-            <span class="param-label">{{ t(pm.label) }}</span>
-            <el-radio-group :model-value="getParam(activeZone, pm.key).mode"
-              @update:model-value="v => switchMode(getParam(activeZone, pm.key), v)" size="small">
-              <el-radio-button value="fixed">{{ t('building.schedule.fixed') }}</el-radio-button>
-              <el-radio-button value="scheduled">{{ t('building.schedule.scheduled') }}</el-radio-button>
-            </el-radio-group>
-          </div>
-
-          <!-- Fixed mode -->
-          <div v-if="getParam(activeZone, pm.key).mode === 'fixed'" class="param-fixed">
-            <el-input-number v-model="getParam(activeZone, pm.key).fixed_value"
-              :min="pm.min" :max="pm.max" :precision="pm.precision" :step="pm.step" />
-          </div>
-
-          <!-- Scheduled mode -->
-          <div v-else class="param-schedules">
-            <div v-for="(sch, sIdx) in getParam(activeZone, pm.key).schedules" :key="sIdx"
-              class="schedule-group" :class="{ 'schedule-conflict': isScheduleInConflict(getParam(activeZone, pm.key).schedules, sIdx) }">
-              <!-- Conflict badge on conflicting group -->
-              <el-tag v-if="isScheduleInConflict(getParam(activeZone, pm.key).schedules, sIdx)"
-                type="danger" size="small" effect="dark" class="conflict-badge">
-                {{ t('building.schedule.conflictWarning') }}
-              </el-tag>
-              <!-- Group header -->
-              <div class="schedule-group-top">
-                <el-input v-model="sch.name" size="small" :placeholder="t('building.schedule.dayGroupName')" style="width: 140px" />
-                <div class="schedule-value-row">
-                  <span class="schedule-sub-label">{{ t('building.schedule.value') }}:</span>
-                  <el-input-number v-model="sch.value" :min="pm.min" :max="pm.max"
-                    :precision="pm.precision" :step="pm.step" size="small" style="width: 140px" />
-                </div>
-                <el-button type="danger" link size="small" @click="removeDayGroup(getParam(activeZone, pm.key), sIdx)">
-                  {{ t('building.schedule.removeSlot') }}
-                </el-button>
-              </div>
-
-              <!-- Date range -->
-              <div class="schedule-line">
-                <span class="schedule-sub-label">{{ t('building.schedule.dateRange') }}:</span>
-                <el-select v-model="sch.start_month" size="small" style="width: 80px">
-                  <el-option v-for="m in 12" :key="m" :label="t(`building.schedule.monthNames.${m}`)" :value="m" />
-                </el-select>
-                <el-select v-model="sch.start_day" size="small" style="width: 70px">
-                  <el-option v-for="d in (MONTH_DAYS[sch.start_month] || 31)" :key="d" :label="`${d}${t('building.schedule.dayUnit')}`" :value="d" />
-                </el-select>
-                <span class="schedule-sep">~</span>
-                <el-select v-model="sch.end_month" size="small" style="width: 80px">
-                  <el-option v-for="m in 12" :key="m" :label="t(`building.schedule.monthNames.${m}`)" :value="m" />
-                </el-select>
-                <el-select v-model="sch.end_day" size="small" style="width: 70px">
-                  <el-option v-for="d in (MONTH_DAYS[sch.end_month] || 31)" :key="d" :label="`${d}${t('building.schedule.dayUnit')}`" :value="d" />
-                </el-select>
-              </div>
-
-              <!-- Day checkboxes -->
-              <div class="schedule-line">
-                <span class="schedule-sub-label">{{ t('building.schedule.weekdays') }}:</span>
-                <el-checkbox-group v-model="sch.days" size="small" class="day-checkboxes">
-                  <el-checkbox-button v-for="d in [1,2,3,4,5,6,7]" :key="d" :value="d">
-                    {{ t(`building.schedule.dayNames.${d}`) }}
-                  </el-checkbox-button>
-                </el-checkbox-group>
-              </div>
-
-              <!-- Hour checkboxes -->
-              <div class="schedule-line schedule-hours-line">
-                <div class="hours-header">
-                  <span class="schedule-sub-label">{{ t('building.schedule.hours') }}:</span>
-                  <div class="hours-quick">
-                    <el-button link type="primary" size="small" @click="selectAllHours(sch)">{{ t('building.schedule.selectAll') }}</el-button>
-                    <el-button link type="primary" size="small" @click="clearAllHours(sch)">{{ t('building.schedule.clearAll') }}</el-button>
-                    <el-button link type="primary" size="small" @click="toggleHourRange(sch, 8, 18)">8~18</el-button>
-                    <el-button link type="primary" size="small" @click="toggleHourRange(sch, 0, 8)">0~8</el-button>
-                    <el-button link type="primary" size="small" @click="toggleHourRange(sch, 18, 24)">18~24</el-button>
-                  </div>
-                </div>
-                <div class="hour-grid">
-                  <label v-for="h in ALL_HOURS" :key="h" class="hour-cell"
-                    :class="{ active: sch.hours.includes(h) }"
-                    @click="sch.hours.includes(h) ? (sch.hours = sch.hours.filter(x => x !== h)) : sch.hours.push(h)">
-                    {{ h }}
-                  </label>
-                </div>
-              </div>
+        <div v-for="pm in PARAM_METAS" :key="pm.key" class="ig-param">
+          <div class="ig-param-header">
+            <span class="ig-param-label">{{ t(pm.label) }}</span>
+            <div class="ig-peak">
+              <span class="ig-peak-label">{{ t('building.schedule.editor.peakValue') }}:</span>
+              <el-input-number v-model="getParam(activeZone, pm.key).fixed_value"
+                :min="pm.min" :max="pm.max" :precision="pm.precision" :step="pm.step"
+                size="small" style="width: 130px" />
+              <span class="ig-peak-unit">{{ paramUnit(pm.key) }}</span>
             </div>
-
-            <el-button type="primary" plain size="small" @click="addDayGroup(getParam(activeZone, pm.key))"
-              :disabled="getParam(activeZone, pm.key).schedules.length >= MAX_SCHEDULES">
-              + {{ t('building.schedule.addDayGroup') }}
+            <el-button type="primary" plain size="small" :icon="Plus"
+              :disabled="getParam(activeZone, pm.key).schedules.length >= MAX_SCHEDULES"
+              @click="addScheduleForParam(getParam(activeZone, pm.key))">
+              {{ t('building.schedule.editor.addSchedule') }}
               ({{ getParam(activeZone, pm.key).schedules.length }}/{{ MAX_SCHEDULES }})
             </el-button>
-            <div class="schedule-note">{{ t('building.schedule.unspecifiedNote') }}</div>
+          </div>
+          <div class="ig-schedules">
+            <ScheduleEditor
+              v-for="(sch, sIdx) in getParam(activeZone, pm.key).schedules"
+              :key="sIdx"
+              :model-value="sch"
+              :peak-value="getParam(activeZone, pm.key).fixed_value"
+              :unit="paramUnit(pm.key)"
+              :param-label="t(pm.label)"
+              :removable="getParam(activeZone, pm.key).schedules.length > 1"
+              @update:model-value="(v: DaySchedule) => getParam(activeZone, pm.key).schedules[sIdx] = v"
+              @remove="removeScheduleAt(getParam(activeZone, pm.key), sIdx)"
+            />
           </div>
         </div>
 
@@ -898,7 +959,7 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
           <div class="param-header">
             <span class="param-label">{{ t(pm.label) }}</span>
             <el-radio-group :model-value="getParam(activeZone, pm.key).mode"
-              @update:model-value="v => switchMode(getParam(activeZone, pm.key), v)" size="small">
+              @update:model-value="(v: string | number | boolean | undefined) => switchMode(getParam(activeZone, pm.key), v)" size="small">
               <el-radio-button value="fixed">{{ t('building.schedule.fixed') }}</el-radio-button>
               <el-radio-button value="scheduled">{{ t('building.schedule.scheduled') }}</el-radio-button>
             </el-radio-group>
@@ -988,8 +1049,11 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
 
 <style scoped>
 .building-view {
-  max-width: 1000px;
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 /* ---- Header ---- */
@@ -997,9 +1061,13 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 4px;
   flex-wrap: wrap;
   gap: 12px;
+  padding: 18px 22px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #ecfeff 0%, #f0f9ff 60%, #faf5ff 100%);
+  border: 1px solid rgba(8, 145, 178, 0.12);
 }
 .header-left { flex: 1; min-width: 0; }
 .header-name-row {
@@ -1037,7 +1105,15 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
 /* ---- Zone table ---- */
 .zone-table-card {
   margin-bottom: 16px;
-  border-radius: 8px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+}
+.zone-table-card :deep(.el-card__header) {
+  padding: 14px 18px;
+  background: #f8fafc;
+}
+.zone-table-card :deep(.el-table) {
+  width: 100%;
 }
 .zone-table-header {
   display: flex;
@@ -1058,6 +1134,109 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
 :deep(.current-zone-row) {
   background-color: var(--el-color-primary-light-9) !important;
 }
+
+/* ---- Zone mini-card grid (replaces el-table) ---- */
+.zone-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.zone-grid-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 4px 2px;
+  border-bottom: 1px dashed #e2e8f0;
+  margin-bottom: 4px;
+}
+.zg-sel-count {
+  margin-left: 6px;
+  font-size: 12px;
+  color: #0891b2;
+  font-weight: 600;
+}
+.zone-grid-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.zone-mini-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+.zone-mini-card:hover {
+  border-color: rgba(8, 145, 178, 0.45);
+  box-shadow: 0 6px 16px rgba(8, 145, 178, 0.10);
+  transform: translateY(-2px);
+}
+.zone-mini-card.active {
+  border-color: #0891b2;
+  background: linear-gradient(135deg, #ecfeff 0%, #f0f9ff 100%);
+  box-shadow: 0 6px 18px rgba(8, 145, 178, 0.16);
+}
+.zone-mini-card.selected {
+  outline: 2px solid rgba(8, 145, 178, 0.35);
+  outline-offset: -2px;
+}
+.zmc-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.zmc-num {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0891b2;
+  min-width: 24px;
+}
+.zmc-name {
+  flex: 1;
+}
+.zmc-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.zmc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+}
+.zmc-field--full {
+  grid-column: 1 / -1;
+}
+.zmc-field label {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 500;
+}
+.zmc-unit {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+  pointer-events: none;
+}
+.zmc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed #e2e8f0;
+}
+@media (max-width: 640px) {
+  .zone-grid-list {
+    grid-template-columns: 1fr;
+  }
+}
 :deep(.el-table .el-input-number) {
   width: 100%;
 }
@@ -1071,14 +1250,75 @@ const MONTH_DAYS: Record<number, number> = { 1:31,2:28,3:31,4:30,5:31,6:30,7:31,
 }
 
 /* ---- Zone card ---- */
-.zone-card { border-radius: 8px; }
+.zone-card {
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+}
+.zone-card :deep(.el-card__header) {
+  padding: 14px 18px;
+  background: #f8fafc;
+}
 .zone-form { padding: 4px 0; }
 
 :deep(.zone-card .el-divider__text) {
   background: rgb(250, 252, 253);
 }
 
-/* ---- Internal gains ---- */
+/* ---- Internal gains (new bar-chart layout) ---- */
+.ig-param {
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+}
+.ig-param-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.ig-param-label {
+  font-weight: 700;
+  font-size: 14px;
+  color: #0f172a;
+  flex: 0 0 auto;
+}
+.ig-peak {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #ecfeff;
+  border: 1px solid #a5f3fc;
+  border-radius: 6px;
+}
+.ig-peak-label {
+  font-size: 12px;
+  color: #0e7490;
+  font-weight: 600;
+}
+.ig-peak-unit {
+  font-size: 12px;
+  color: #475569;
+}
+.ig-schedules {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+@media (max-width: 640px) {
+  .ig-param-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ig-peak {
+    justify-content: space-between;
+  }
+}
+
+/* ---- Legacy setpoint param-row ---- */
 .param-row {
   margin-bottom: 16px;
   padding: 14px;

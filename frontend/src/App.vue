@@ -7,7 +7,7 @@ const route = useRoute()
 </script>
 
 <template>
-  <router-view v-if="route.name === 'login'" />
+  <router-view v-if="route.meta.plain || route.meta.noSidebar" />
   <AppLayout v-else>
     <router-view />
   </AppLayout>

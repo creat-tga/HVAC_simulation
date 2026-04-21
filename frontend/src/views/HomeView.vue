@@ -568,11 +568,12 @@ function openProject(id: string) {
 
 <style scoped>
 .home-view {
-  padding: 4px;
+  padding: 24px 28px 0;
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .fixed-top {
@@ -583,8 +584,7 @@ function openProject(id: string) {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-top: 6px;
-  padding-right: 4px;
+  padding: 6px 4px 24px 0;
   user-select: none;
 }
 

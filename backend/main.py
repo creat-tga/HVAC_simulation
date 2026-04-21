@@ -8,7 +8,10 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import engine, Base, async_session
 from app.routers import projects, buildings, simulation, reports, auth, ws
+from app.routers import admin as admin_router
+from app.routers import library as library_router
 from app.services.auth_service import seed_admin
+from app.services.library_service import seed_preset_weather
 from app.simulation.energyplus.idf_generator import ZoneValidationError
 
 # Configure logging — reduce noise from libraries
@@ -28,11 +31,38 @@ async def lifespan(app: FastAPI):
     # Create tables on startup (use Alembic for production)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    # Seed admin user
+        # SQLite-only: lightweight column additions for existing user table
+        if settings.database_url.startswith("sqlite"):
+            await _sqlite_migrate_users(conn)
+    # Seed admin user + preset weather files
     async with async_session() as session:
         await seed_admin(session)
+        try:
+            await seed_preset_weather(session)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Seed weather failed: %s", exc)
     yield
     await engine.dispose()
+
+
+async def _sqlite_migrate_users(conn) -> None:
+    """Add new columns to users table on legacy SQLite installs."""
+    from sqlalchemy import text
+    res = await conn.execute(text("PRAGMA table_info(users)"))
+    cols = {row[1] for row in res.fetchall()}
+    statements = []
+    if "email" not in cols:
+        statements.append("ALTER TABLE users ADD COLUMN email VARCHAR(200)")
+    if "full_name" not in cols:
+        statements.append("ALTER TABLE users ADD COLUMN full_name VARCHAR(200)")
+    if "role" not in cols:
+        statements.append("ALTER TABLE users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'user'")
+    if "status" not in cols:
+        statements.append("ALTER TABLE users ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'active'")
+    if "last_login_at" not in cols:
+        statements.append("ALTER TABLE users ADD COLUMN last_login_at DATETIME")
+    for sql in statements:
+        await conn.execute(text(sql))
 
 
 app = FastAPI(
@@ -51,6 +81,11 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/api")
+app.include_router(admin_router.router, prefix="/api")
+app.include_router(admin_router.me_router, prefix="/api")
+app.include_router(library_router.weather_router, prefix="/api")
+app.include_router(library_router.equipment_router, prefix="/api")
+app.include_router(library_router.template_router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(buildings.router, prefix="/api")
 app.include_router(simulation.router, prefix="/api")
