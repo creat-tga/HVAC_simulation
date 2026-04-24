@@ -38,7 +38,16 @@ class WeatherFileUpdate(BaseModel):
 
 # ---------- Equipment ----------
 
-EquipmentType = Literal["chiller", "heat_pump", "cooling_tower", "pump", "boiler", "fan", "other"]
+EquipmentType = Literal[
+    "chiller",
+    "heat_pump",
+    "air_cooled_module",
+    "cooling_tower",
+    "pump",
+    "boiler",
+    "fan",
+    "other",
+]
 
 
 class EquipmentModelCreate(BaseModel):

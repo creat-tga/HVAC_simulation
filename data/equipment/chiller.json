@@ -1,0 +1,62 @@
+[
+  {
+    "id": 1,
+    "factory": "格力",
+    "model": "CE800",
+    "series": "CE系列离心式",
+    "capacity": "800",
+    "cop": "5.8",
+    "powerDesign": "137.9",
+    "evapFlow": "137.5",
+    "condFlow": "165.0",
+    "evapDp": "6.5",
+    "condDp": "7.0",
+    "type": "离心式水冷",
+    "deleted": 0
+  },
+  {
+    "id": 2,
+    "factory": "格力",
+    "model": "CE1200",
+    "series": "CE系列离心式",
+    "capacity": "1200",
+    "cop": "5.9",
+    "powerDesign": "203.4",
+    "evapFlow": "206.4",
+    "condFlow": "247.5",
+    "evapDp": "7.0",
+    "condDp": "7.5",
+    "type": "离心式水冷",
+    "deleted": 0
+  },
+  {
+    "id": 3,
+    "factory": "格力",
+    "model": "CVE600",
+    "series": "CVE系列永磁同步变频",
+    "capacity": "600",
+    "cop": "6.4",
+    "powerDesign": "93.8",
+    "evapFlow": "103.2",
+    "condFlow": "123.8",
+    "evapDp": "5.5",
+    "condDp": "6.0",
+    "type": "永磁同步变频离心",
+    "deleted": 0
+  },
+  {
+    "id": 4,
+    "factory": "格力",
+    "model": "CVE1000",
+    "series": "CVE系列永磁同步变频",
+    "capacity": "1000",
+    "cop": "6.5",
+    "powerDesign": "153.8",
+    "evapFlow": "172.0",
+    "condFlow": "206.4",
+    "evapDp": "6.0",
+    "condDp": "6.5",
+    "type": "永磁同步变频离心",
+    "deleted": 0
+  }
+]

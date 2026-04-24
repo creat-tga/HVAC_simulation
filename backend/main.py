@@ -10,8 +10,10 @@ from app.database import engine, Base, async_session
 from app.routers import projects, buildings, simulation, reports, auth, ws
 from app.routers import admin as admin_router
 from app.routers import library as library_router
+from app.routers import system_scheme as scheme_router
 from app.services.auth_service import seed_admin
-from app.services.library_service import seed_preset_weather
+# Library seeding (weather / equipment) is no longer auto-run on startup.
+# Use scripts/seed_weather.py and scripts/seed_equipment.py manually.
 from app.simulation.energyplus.idf_generator import ZoneValidationError
 
 # Configure logging — reduce noise from libraries
@@ -35,13 +37,10 @@ async def lifespan(app: FastAPI):
         if settings.database_url.startswith("sqlite"):
             await _sqlite_migrate_users(conn)
             await _sqlite_migrate_hvac_systems(conn)
-    # Seed admin user + preset weather files
+            await _sqlite_migrate_system_schemes(conn)
+    # Seed admin user only. Weather/equipment seeding lives in scripts/.
     async with async_session() as session:
         await seed_admin(session)
-        try:
-            await seed_preset_weather(session)
-        except Exception as exc:
-            logging.getLogger(__name__).warning("Seed weather failed: %s", exc)
     yield
     await engine.dispose()
 
@@ -86,6 +85,44 @@ async def _sqlite_migrate_hvac_systems(conn) -> None:
         await conn.run_sync(Base.metadata.create_all)
 
 
+async def _sqlite_migrate_system_schemes(conn) -> None:
+    """Drop legacy system_schemes tables when schema diverges (project_id / subsystem layer)."""
+    from sqlalchemy import text
+    drop_targets: list[str] = []
+
+    res = await conn.execute(text("PRAGMA table_info(system_schemes)"))
+    rows = res.fetchall()
+    if rows:
+        cols = {row[1] for row in rows}
+        if "project_id" not in cols:
+            drop_targets += [
+                "system_scheme_tower_groups",
+                "system_scheme_combos",
+                "system_subsystems",
+                "system_schemes",
+            ]
+
+    if not drop_targets:
+        # Even if scheme table is OK, ensure combos / tower_groups have subsystem_id (could be partial state)
+        for tbl in ("system_scheme_combos", "system_scheme_tower_groups"):
+            r = await conn.execute(text(f"PRAGMA table_info({tbl})"))
+            tcols = {row[1] for row in r.fetchall()}
+            if tcols and "subsystem_id" not in tcols:
+                drop_targets += [
+                    "system_scheme_tower_groups",
+                    "system_scheme_combos",
+                    "system_subsystems",
+                ]
+                break
+
+    for tbl in drop_targets:
+        await conn.execute(text(f"DROP TABLE IF EXISTS {tbl}"))
+    if drop_targets:
+        # Recreate via metadata
+        from app.models import system_scheme as _scheme_models  # noqa: F401
+        await conn.run_sync(Base.metadata.create_all)
+
+
 app = FastAPI(
     title=settings.app_name,
     description="HVAC系统仿真平台 — 建筑负荷模拟与系统能耗分析",
@@ -110,6 +147,9 @@ app.include_router(library_router.template_router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(buildings.router, prefix="/api")
 app.include_router(simulation.router, prefix="/api")
+app.include_router(scheme_router.router, prefix="/api")
+app.include_router(scheme_router.scheme_router, prefix="/api")
+app.include_router(scheme_router.eq_search_router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(ws.router, prefix="/api")
 

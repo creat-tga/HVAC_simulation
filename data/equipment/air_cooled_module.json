@@ -1,0 +1,36 @@
+[
+  {
+    "id": 1,
+    "factory": "美的",
+    "model": "LSQWRF130",
+    "series": "LSQWRF系列",
+    "capacity": "130",
+    "cop": "3.2",
+    "powerDesign": "40.6",
+    "heatingCapacity": "140.0",
+    "heatingPower": "42.0",
+    "coolingFlow": "22.4",
+    "heatingFlow": "24.1",
+    "coolingDp": "5.0",
+    "heatingDp": "5.0",
+    "type": "风冷模块",
+    "deleted": 0
+  },
+  {
+    "id": 2,
+    "factory": "美的",
+    "model": "LSQWRF200",
+    "series": "LSQWRF系列",
+    "capacity": "200",
+    "cop": "3.1",
+    "powerDesign": "64.5",
+    "heatingCapacity": "215.0",
+    "heatingPower": "67.2",
+    "coolingFlow": "34.4",
+    "heatingFlow": "37.0",
+    "coolingDp": "5.5",
+    "heatingDp": "5.5",
+    "type": "风冷模块",
+    "deleted": 0
+  }
+]

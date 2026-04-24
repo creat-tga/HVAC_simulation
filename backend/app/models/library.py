@@ -60,6 +60,48 @@ class EquipmentModel(Base):
     )
 
 
+class _TypedEquipmentColumnsMixin:
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    equipment_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    brand: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    model_no: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    capacity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cop: Mapped[float | None] = mapped_column(Float, nullable=True)
+    parameters: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EquipmentChiller(_TypedEquipmentColumnsMixin, Base):
+    __tablename__ = "equipment_chillers"
+
+
+class EquipmentAirCooledModule(_TypedEquipmentColumnsMixin, Base):
+    __tablename__ = "equipment_air_cooled_modules"
+
+
+class EquipmentPump(_TypedEquipmentColumnsMixin, Base):
+    __tablename__ = "equipment_pumps"
+
+
+class EquipmentCoolingTower(_TypedEquipmentColumnsMixin, Base):
+    __tablename__ = "equipment_cooling_towers"
+
+
+class EquipmentBoiler(_TypedEquipmentColumnsMixin, Base):
+    __tablename__ = "equipment_boilers"
+
+
 class BuildingTemplate(Base):
     """Reusable building template — independent of any project, can be cloned into projects."""
 

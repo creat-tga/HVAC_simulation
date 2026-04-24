@@ -103,10 +103,22 @@ const router = createRouter({
           meta: { title: '系统方案' },
         },
         {
+          path: 'system-schemes',
+          name: 'systemSchemeList',
+          component: () => import('@/views/SystemSchemeListView.vue'),
+          meta: { title: '系统方案' },
+        },
+        {
+          path: 'system-schemes/:schemeId',
+          name: 'systemSchemeDetail',
+          component: () => import('@/views/SystemSchemeDetailView.vue'),
+          meta: { title: '系统方案详情' },
+        },
+        // Legacy: still routed for backward compatibility (redirects to list)
+        {
           path: 'buildings/:buildingId/system',
           name: 'systemSelect',
-          component: () => import('@/views/SystemSelectView.vue'),
-          meta: { title: '系统方案' },
+          redirect: (to) => `/projects/${to.params.projectId}/system-schemes`,
         },
         {
           path: 'buildings/:buildingId/simulation',
