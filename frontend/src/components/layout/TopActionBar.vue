@@ -36,7 +36,6 @@ onMounted(() => {
 function switchLanguage(lang: string) {
   currentLang.value = lang
   setLocale(lang)
-  window.location.reload()
 }
 
 function handleLogout() {

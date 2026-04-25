@@ -87,6 +87,28 @@ async def get_scheme(
     return s
 
 
+@scheme_router.get("/{scheme_id}/bundle")
+async def get_scheme_bundle(
+    scheme_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Combined endpoint returning scheme + derived + summary in one round-trip.
+
+    Avoids three parallel sqlite connections that contend for the same DB file.
+    """
+    s = await svc.get_scheme(db, scheme_id)
+    if not s:
+        raise HTTPException(404, "方案不存在")
+    derived = await svc.compute_scheme_derived(db, s)
+    summary = await svc.get_scheme_summary(db, s)
+    return {
+        "scheme": SystemSchemeResponse.model_validate(s).model_dump(mode="json"),
+        "derived": derived,
+        "summary": summary.model_dump(mode="json"),
+    }
+
+
 @scheme_router.get("/{scheme_id}/derived")
 async def get_scheme_derived(
     scheme_id: uuid.UUID,
@@ -129,6 +151,30 @@ async def validate_scheme_payload(
 ):
     """Dry-run validation against an unsaved payload (no DB writes)."""
     return await svc.validate_scheme_payload(db, scheme_id, data)
+
+
+@scheme_router.post("/{scheme_id}/validate-strategy", response_model=ValidationReport)
+async def validate_strategy(
+    scheme_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    s = await svc.get_scheme(db, scheme_id)
+    if not s:
+        raise HTTPException(404, "方案不存在")
+    issues = await svc.validate_strategy_scheme(db, s)
+    has_error = any(i.severity == "error" for i in issues)
+    return ValidationReport(valid=not has_error, issues=issues)
+
+
+@scheme_router.post("/{scheme_id}/validate-strategy-payload", response_model=ValidationReport)
+async def validate_strategy_payload(
+    scheme_id: uuid.UUID,
+    data: SystemSchemeUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await svc.validate_strategy_payload(db, scheme_id, data)
 
 
 @scheme_router.put("/{scheme_id}", response_model=SystemSchemeResponse)

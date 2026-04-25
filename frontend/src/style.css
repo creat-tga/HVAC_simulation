@@ -25,6 +25,9 @@
 
 html {
   background: var(--app-bg);
+  /* 固定为滚动条预留 gutter，避免内容高度变化时（如展开子系统、切换步骤）
+     滚动条出现/消失导致页面横向跳动。 */
+  scrollbar-gutter: stable;
 }
 
 body {

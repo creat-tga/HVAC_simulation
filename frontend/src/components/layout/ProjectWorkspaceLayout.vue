@@ -295,9 +295,11 @@ onMounted(loadProject)
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* 始终为竖向滚动条预留空间，避免内容增减时整页跳动。 */
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
-  padding: 24px 28px;
+  padding: 10px 16px;
   box-sizing: border-box;
 }
 .ws-content > * {

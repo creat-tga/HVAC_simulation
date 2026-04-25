@@ -7,11 +7,12 @@
  */
 
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import {
   createScheme,
   deleteScheme,
   getScheme,
+  getSchemeBundle,
   getSchemeDerived,
   getSchemeSummary,
   listSchemes,
@@ -19,6 +20,8 @@ import {
   validateProjectSchemes,
   validateScheme,
   validateSchemePayload,
+  validateStrategy,
+  validateStrategyPayload,
 } from '@/api/system-scheme'
 import type {
   CapacitySummary,
@@ -38,9 +41,12 @@ export const useSystemSchemeStore = defineStore('systemScheme', () => {
   // detail page
   const activeScheme = ref<SystemScheme | null>(null)
   const summary = ref<CapacitySummary | null>(null)
-  const derived = ref<SchemeDerived | null>(null)
-  const validation = ref<ValidationReport | null>(null)
-  const projectValidation = ref<ValidationReport | null>(null)
+  // derived / validation / projectValidation 仅用于只读展示，使用 shallowRef
+  // 避免 Vue 对其深度创建 Proxy（千余字段的嵌套结构在子组件渲染时
+  // 会严重拖慢 el-descriptions / el-input-number 的初次挂载。
+  const derived = shallowRef<SchemeDerived | null>(null)
+  const validation = shallowRef<ValidationReport | null>(null)
+  const projectValidation = shallowRef<ValidationReport | null>(null)
   const loadingDetail = ref(false)
   const dirty = ref(false)
 
@@ -82,14 +88,10 @@ export const useSystemSchemeStore = defineStore('systemScheme', () => {
   async function fetchDetail(schemeId: string) {
     loadingDetail.value = true
     try {
-      const [{ data: scheme }, { data: sum }, { data: der }] = await Promise.all([
-        getScheme(schemeId),
-        getSchemeSummary(schemeId),
-        getSchemeDerived(schemeId),
-      ])
-      activeScheme.value = scheme
-      summary.value = sum
-      derived.value = der
+      const { data } = await getSchemeBundle(schemeId)
+      activeScheme.value = data.scheme
+      summary.value = data.summary
+      derived.value = data.derived
       dirty.value = false
     } finally {
       loadingDetail.value = false
@@ -126,6 +128,18 @@ export const useSystemSchemeStore = defineStore('systemScheme', () => {
    */
   async function validatePayload(schemeId: string, data: SystemSchemeUpdate) {
     const { data: rep } = await validateSchemePayload(schemeId, data)
+    validation.value = rep
+    return rep
+  }
+
+  async function validateStrategyActive(schemeId: string) {
+    const { data } = await validateStrategy(schemeId)
+    validation.value = data
+    return data
+  }
+
+  async function validateStrategyPayloadOnly(schemeId: string, data: SystemSchemeUpdate) {
+    const { data: rep } = await validateStrategyPayload(schemeId, data)
     validation.value = rep
     return rep
   }
@@ -181,6 +195,8 @@ export const useSystemSchemeStore = defineStore('systemScheme', () => {
     save,
     validateActive,
     validatePayload,
+    validateStrategyActive,
+    validateStrategyPayloadOnly,
     markDirty,
     coolingShort,
     heatingShort,

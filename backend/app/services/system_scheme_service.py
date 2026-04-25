@@ -20,6 +20,7 @@ from app.models.system_scheme import (
     SchemeCombo,
     SchemeTowerGroup,
 )
+from app.services import control_strategy_service as cs
 from app.services import library_service as lib
 from app.schemas.system_scheme import (
     SystemSchemeCreate,
@@ -85,7 +86,7 @@ async def create_scheme(
     if len(existing) >= 5:
         raise ValueError("每个项目至多 5 个系统方案")
 
-    await _check_building_load_completed(db, data.building_id)
+    building = await _check_building_load_completed(db, data.building_id)
 
     scheme = SystemScheme(
         project_id=project_id,
@@ -99,31 +100,24 @@ async def create_scheme(
     for sub in data.subsystems:
         scheme.subsystems.append(_build_subsystem(sub))
 
+    if scheme.subsystems:
+        derived = await compute_scheme_derived(db, scheme)
+        scheme.control_strategy = cs.rebuild_control_strategy(
+            data.control_strategy,
+            [],
+            scheme,
+            building,
+            derived,
+        )
+    elif not scheme.control_strategy:
+        scheme.control_strategy = cs.default_control_strategy()
+
     db.add(scheme)
     await db.commit()
     return await get_scheme(db, scheme.id)  # type: ignore[return-value]
 
 
 def _build_subsystem(data: SubsystemCreate) -> SystemSubsystem:
-    sub = SystemSubsystem(
-        subsystem_index=data.subsystem_index,
-        subsystem_type=data.subsystem_type,
-        name=data.name,
-        design_params=data.design_params,
-    )
-    for c in data.combos:
-        sub.combos.append(SchemeCombo(**c.model_dump(exclude={"id"})))
-    for t in data.tower_groups:
-        sub.tower_groups.append(SchemeTowerGroup(**t.model_dump(exclude={"id"})))
-    return sub
-
-
-def _build_subsystem_with_ids(data: SubsystemCreate) -> SystemSubsystem:
-    """Same as _build_subsystem but preserves caller-supplied ids on the
-    transient ORM objects. Used exclusively by `validate_scheme_payload` so
-    that emitted issues carry the same combo_id / subsystem_id values the
-    frontend already has, allowing inline highlights to match.
-    """
     sub_kwargs: dict[str, Any] = dict(
         subsystem_index=data.subsystem_index,
         subsystem_type=data.subsystem_type,
@@ -132,18 +126,27 @@ def _build_subsystem_with_ids(data: SubsystemCreate) -> SystemSubsystem:
     )
     if data.id is not None:
         sub_kwargs["id"] = data.id
+    else:
+        sub_kwargs["id"] = uuid.uuid4()
     sub = SystemSubsystem(**sub_kwargs)
+    # Initialize relationship collections explicitly to avoid lazy-load attempts
+    # in async context when the lists are empty (e.g. air_cooled with no towers).
+    sub.combos = []
+    sub.tower_groups = []
     for c in data.combos:
-        c_kwargs = c.model_dump()
-        if c_kwargs.get("id") is None:
-            c_kwargs.pop("id", None)
-        sub.combos.append(SchemeCombo(**c_kwargs))
+        combo_kwargs = c.model_dump()
+        combo_kwargs["id"] = combo_kwargs.get("id") or uuid.uuid4()
+        sub.combos.append(SchemeCombo(**combo_kwargs))
     for t in data.tower_groups:
-        t_kwargs = t.model_dump()
-        if t_kwargs.get("id") is None:
-            t_kwargs.pop("id", None)
-        sub.tower_groups.append(SchemeTowerGroup(**t_kwargs))
+        tower_kwargs = t.model_dump()
+        tower_kwargs["id"] = tower_kwargs.get("id") or uuid.uuid4()
+        sub.tower_groups.append(SchemeTowerGroup(**tower_kwargs))
     return sub
+
+
+def _build_subsystem_with_ids(data: SubsystemCreate) -> SystemSubsystem:
+    """Preserve caller-supplied ids on transient objects used by dry-run validation."""
+    return _build_subsystem(data)
 
 
 async def update_scheme(
@@ -152,6 +155,8 @@ async def update_scheme(
     scheme = await get_scheme(db, scheme_id)
     if not scheme:
         return None
+
+    old_subsystems = list(scheme.subsystems)
 
     if data.building_id is not None and data.building_id != scheme.building_id:
         await _check_building_load_completed(db, data.building_id)
@@ -166,6 +171,18 @@ async def update_scheme(
         await db.flush()
         for sub in data.subsystems:
             scheme.subsystems.append(_build_subsystem(sub))
+
+    if data.control_strategy is not None or data.subsystems is not None or not scheme.control_strategy:
+        building = await db.get(Building, scheme.building_id)
+        derived = await compute_scheme_derived(db, scheme)
+        base_strategy = data.control_strategy if data.control_strategy is not None else scheme.control_strategy
+        scheme.control_strategy = cs.rebuild_control_strategy(
+            base_strategy,
+            old_subsystems,
+            scheme,
+            building,
+            derived,
+        )
 
     await db.commit()
     return await get_scheme(db, scheme_id)
@@ -231,9 +248,7 @@ def _pump_view(pump: Any | None, active_count: int) -> dict[str, Any] | None:
     }
 
 
-async def compute_subsystem_derived(
-    db: AsyncSession, sub: SystemSubsystem
-) -> dict[str, Any]:
+def _collect_subsystem_equipment_ids(sub: SystemSubsystem) -> list[uuid.UUID]:
     ids: list[uuid.UUID] = []
     for c in sub.combos:
         for fid in (c.primary_model_id, c.chw_pump_model_id, c.cw_pump_model_id):
@@ -242,7 +257,36 @@ async def compute_subsystem_derived(
     for tg in sub.tower_groups:
         if tg.tower_model_id is not None:
             ids.append(tg.tower_model_id)
-    eqmap = await _get_equipment_map(db, ids)
+    return ids
+
+
+def _collect_subsystem_typed_ids(sub: SystemSubsystem) -> dict[str, list[uuid.UUID]]:
+    """Group equipment IDs by their known equipment type for batched typed lookups."""
+    if sub.subsystem_type == "air_cooled":
+        primary_type = "air_cooled_module"
+    else:
+        primary_type = "chiller"
+    typed: dict[str, list[uuid.UUID]] = {primary_type: [], "pump": [], "cooling_tower": []}
+    for c in sub.combos:
+        if c.primary_model_id is not None:
+            typed[primary_type].append(c.primary_model_id)
+        if c.chw_pump_model_id is not None:
+            typed["pump"].append(c.chw_pump_model_id)
+        if c.cw_pump_model_id is not None:
+            typed["pump"].append(c.cw_pump_model_id)
+    for tg in sub.tower_groups:
+        if tg.tower_model_id is not None:
+            typed["cooling_tower"].append(tg.tower_model_id)
+    return typed
+
+
+async def compute_subsystem_derived(
+    db: AsyncSession,
+    sub: SystemSubsystem,
+    eqmap: dict[uuid.UUID, Any] | None = None,
+) -> dict[str, Any]:
+    if eqmap is None:
+        eqmap = await _get_equipment_map(db, _collect_subsystem_equipment_ids(sub))
 
     total_cooling = 0.0
     total_heating = 0.0
@@ -349,11 +393,19 @@ async def compute_subsystem_derived(
 async def compute_scheme_derived(
     db: AsyncSession, scheme: SystemScheme
 ) -> dict[str, Any]:
+    # Batch-load all equipment referenced by this scheme in a single round-trip
+    # (per typed table) instead of repeating the lookup for each subsystem.
+    typed_ids: dict[str, list[uuid.UUID]] = {}
+    for sub in scheme.subsystems:
+        for eq_type, ids in _collect_subsystem_typed_ids(sub).items():
+            typed_ids.setdefault(eq_type, []).extend(ids)
+    eqmap = await lib.load_equipment_by_typed_ids(db, typed_ids) if any(typed_ids.values()) else {}
+
     subs_derived = []
     cool_total = 0.0
     heat_total = 0.0
     for sub in scheme.subsystems:
-        d = await compute_subsystem_derived(db, sub)
+        d = await compute_subsystem_derived(db, sub, eqmap=eqmap)
         subs_derived.append(d)
         cool_total += d["cooling_capacity_total"]
         heat_total += d["heating_capacity_total"]
@@ -369,8 +421,37 @@ async def compute_scheme_derived(
 # Capacity summary (per scheme: load from bound building, capacity from subsystems)
 # ---------------------------------------------------------------------------
 
+async def _compute_capacity_totals(db: AsyncSession, scheme: SystemScheme) -> tuple[float, float]:
+    """Lightweight cooling/heating totals — only loads primary equipment (chiller / module)."""
+    typed_ids: dict[str, list[uuid.UUID]] = {"chiller": [], "air_cooled_module": []}
+    for sub in scheme.subsystems:
+        key = "air_cooled_module" if sub.subsystem_type == "air_cooled" else "chiller"
+        for c in sub.combos:
+            if c.primary_model_id is not None:
+                typed_ids.setdefault(key, []).append(c.primary_model_id)
+    if not any(typed_ids.values()):
+        return 0.0, 0.0
+    eqmap = await lib.load_equipment_by_typed_ids(db, typed_ids)
+    cool_total = 0.0
+    heat_total = 0.0
+    for sub in scheme.subsystems:
+        for c in sub.combos:
+            primary = eqmap.get(c.primary_model_id) if c.primary_model_id else None
+            if not primary:
+                continue
+            unit_cooling = float(primary.capacity or 0.0)
+            if sub.subsystem_type == "chiller_plant":
+                cool_total += unit_cooling * c.primary_count
+            elif sub.subsystem_type == "air_cooled":
+                n = c.primary_count * c.group_count
+                cool_total += unit_cooling * n
+                unit_heating = _model_param(primary, "heating_capacity", unit_cooling * 0.95)
+                heat_total += unit_heating * n
+    return round(cool_total, 1), round(heat_total, 1)
+
+
 async def get_scheme_summary(db: AsyncSession, scheme: SystemScheme) -> CapacitySummary:
-    derived = await compute_scheme_derived(db, scheme)
+    cool_total, heat_total = await _compute_capacity_totals(db, scheme)
     stmt = (
         select(SimulationResult)
         .where(SimulationResult.building_id == scheme.building_id)
@@ -383,8 +464,8 @@ async def get_scheme_summary(db: AsyncSession, scheme: SystemScheme) -> Capacity
     return CapacitySummary(
         cooling_load_peak=latest.peak_cooling_load if latest else None,
         heating_load_peak=latest.peak_heating_load if latest else None,
-        cooling_capacity_total=derived["cooling_capacity_total"],
-        heating_capacity_total=derived["heating_capacity_total"],
+        cooling_capacity_total=cool_total,
+        heating_capacity_total=heat_total,
     )
 
 
@@ -607,7 +688,7 @@ def _validate_air_cooled(scheme, sub, derived, issues):
                          scheme_id=scheme.id, subsystem_id=sub.id, combo_id=c_orm.id)
 
 
-async def validate_scheme(db: AsyncSession, scheme: SystemScheme) -> list[ValidationIssue]:
+async def validate_selection_scheme(db: AsyncSession, scheme: SystemScheme) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     if not scheme.subsystems:
         _add(issues, code="SCHEME_NO_SUB", severity="error",
@@ -626,6 +707,25 @@ async def validate_scheme(db: AsyncSession, scheme: SystemScheme) -> list[Valida
                  scheme_id=scheme.id)
     for sub in scheme.subsystems:
         issues.extend(await validate_subsystem(db, scheme, sub))
+    return issues
+
+
+async def validate_strategy_scheme(db: AsyncSession, scheme: SystemScheme) -> list[ValidationIssue]:
+    building = await db.get(Building, scheme.building_id)
+    derived = await compute_scheme_derived(db, scheme)
+    strategy = cs.rebuild_control_strategy(
+        scheme.control_strategy,
+        list(scheme.subsystems),
+        scheme,
+        building,
+        derived,
+    )
+    return cs.validate_control_strategy(scheme, building, derived, strategy)
+
+
+async def validate_scheme(db: AsyncSession, scheme: SystemScheme) -> list[ValidationIssue]:
+    issues = await validate_selection_scheme(db, scheme)
+    issues.extend(await validate_strategy_scheme(db, scheme))
     return issues
 
 
@@ -693,9 +793,48 @@ async def validate_scheme_payload(
             # delete-orphan flushing.
             set_committed_value(scheme, "subsystems", new_subs)
         async with db.begin_nested():
-            issues = await validate_scheme(db, scheme)
+            issues = await validate_selection_scheme(db, scheme)
     finally:
         # Discard any in-memory mutations so the dry-run is side-effect free.
+        await db.rollback()
+    has_error = any(i.severity == "error" for i in issues)
+    return ValidationReport(valid=not has_error, issues=issues)
+
+
+async def validate_strategy_payload(
+    db: AsyncSession, scheme_id: uuid.UUID, data: SystemSchemeUpdate
+) -> ValidationReport:
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    scheme = await get_scheme(db, scheme_id)
+    if not scheme:
+        return ValidationReport(valid=False, issues=[])
+    old_subsystems = list(scheme.subsystems)
+    try:
+        payload = data.model_dump(exclude_unset=True, exclude={"subsystems"})
+        for k, v in payload.items():
+            setattr(scheme, k, v)
+        if data.subsystems is not None:
+            new_subs: list[SystemSubsystem] = []
+            for sub_data in data.subsystems:
+                s = _build_subsystem_with_ids(sub_data)
+                set_committed_value(s, "combos", list(s.combos))
+                set_committed_value(s, "tower_groups", list(s.tower_groups))
+                new_subs.append(s)
+            set_committed_value(scheme, "subsystems", new_subs)
+        building = await db.get(Building, scheme.building_id)
+        derived = await compute_scheme_derived(db, scheme)
+        if data.control_strategy is not None or data.subsystems is not None or not scheme.control_strategy:
+            scheme.control_strategy = cs.rebuild_control_strategy(
+                data.control_strategy if data.control_strategy is not None else scheme.control_strategy,
+                old_subsystems,
+                scheme,
+                building,
+                derived,
+            )
+        async with db.begin_nested():
+            issues = cs.validate_control_strategy(scheme, building, derived, scheme.control_strategy or {})
+    finally:
         await db.rollback()
     has_error = any(i.severity == "error" for i in issues)
     return ValidationReport(valid=not has_error, issues=issues)
@@ -763,14 +902,4 @@ def default_design_params(subsystem_type: str) -> dict[str, Any]:
 
 
 def default_control_strategy() -> dict[str, Any]:
-    return {
-        "run_schedules": [{
-            "start_month": 6, "start_day": 15,
-            "end_month": 10, "end_day": 15,
-            "weekdays": [1, 2, 3, 4, 5],
-            "start_hour": 8, "end_hour": 18,
-        }],
-        "equipment": {},
-        "load_distribution": {"mode": "fixed_ratio"},
-        "water_temp": {},
-    }
+    return cs.default_control_strategy()

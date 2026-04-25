@@ -50,12 +50,30 @@ export function getSchemeDerived(schemeId: string) {
   return api.get<SchemeDerived>(`${schBase(schemeId)}/derived`)
 }
 
+export interface SchemeBundle {
+  scheme: SystemScheme
+  derived: SchemeDerived
+  summary: CapacitySummary
+}
+
+export function getSchemeBundle(schemeId: string) {
+  return api.get<SchemeBundle>(`${schBase(schemeId)}/bundle`)
+}
+
 export function validateScheme(schemeId: string) {
   return api.post<ValidationReport>(`${schBase(schemeId)}/validate`)
 }
 
 export function validateSchemePayload(schemeId: string, data: SystemSchemeUpdate) {
   return api.post<ValidationReport>(`${schBase(schemeId)}/validate-payload`, data)
+}
+
+export function validateStrategy(schemeId: string) {
+  return api.post<ValidationReport>(`${schBase(schemeId)}/validate-strategy`)
+}
+
+export function validateStrategyPayload(schemeId: string, data: SystemSchemeUpdate) {
+  return api.post<ValidationReport>(`${schBase(schemeId)}/validate-strategy-payload`, data)
 }
 
 // ---- equipment search ----

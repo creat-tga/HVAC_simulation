@@ -1,7 +1,7 @@
 import re
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -15,6 +15,25 @@ engine = create_async_engine(
     settings.database_url, echo=settings.sql_echo, connect_args=connect_args
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+# Enable WAL + tuned pragmas on every new SQLite connection for better
+# concurrent read performance (multiple in-flight async requests). Applies to
+# both the async and sync engines below.
+def _apply_sqlite_pragmas(dbapi_conn, _record):  # noqa: D401
+    try:
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.execute("PRAGMA temp_store=MEMORY")
+        cur.execute("PRAGMA cache_size=-20000")  # ~20MB
+        cur.close()
+    except Exception:
+        pass
+
+
+if settings.database_url.startswith("sqlite"):
+    event.listen(engine.sync_engine, "connect", _apply_sqlite_pragmas)
 
 
 # Synchronous engine for Celery workers
@@ -32,6 +51,9 @@ if _sync_url.startswith("sqlite"):
 
 sync_engine = create_engine(_sync_url, echo=settings.sql_echo, connect_args=_sync_connect_args)
 SyncSession = sessionmaker(sync_engine, class_=Session, expire_on_commit=False)
+
+if _sync_url.startswith("sqlite"):
+    event.listen(sync_engine, "connect", _apply_sqlite_pragmas)
 
 
 class Base(DeclarativeBase):

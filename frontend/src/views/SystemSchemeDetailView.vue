@@ -11,14 +11,20 @@ import { computed, nextTick, onMounted, onBeforeUnmount, reactive, ref, watch } 
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Plus, Check, Setting, Delete } from '@element-plus/icons-vue'
+import { ArrowLeft, Plus, Check, Setting, Delete, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
+import { getBuilding } from '@/api/buildings'
 import { useSystemSchemeStore } from '@/stores/system-scheme'
 import SubsystemEditor from '@/components/scheme/SubsystemEditor.vue'
+import ControlStrategyEditor from '@/components/scheme/ControlStrategyEditor.vue'
+import type { Building } from '@/types/building'
 import type {
+  ControlStrategy,
   Subsystem,
   SubsystemType,
+  StrategyStep,
   SystemSchemeUpdate,
 } from '@/types/system-scheme'
+import { ensureControlStrategy } from '@/utils/control-strategy'
 
 const route = useRoute()
 const router = useRouter()
@@ -35,14 +41,99 @@ const visibleIssues = computed(() => {
   return errors.length ? errors : all
 })
 
+const strategyIssues = computed(() => {
+  const all = store.validation?.issues || []
+  const strategyOnly = all.filter((i) => i.code.startsWith('STR_') || i.field?.startsWith('control_strategy'))
+  const errors = strategyOnly.filter((i) => i.severity === 'error')
+  return errors.length ? errors : strategyOnly
+})
+
+const normalizedControlStrategy = computed(() =>
+  ensureControlStrategy(
+    local.control_strategy,
+    local.subsystems,
+    store.derived?.subsystems,
+    building.value?.zones || [],
+  ),
+)
+
 const wizardStep = ref<'selection' | 'strategy' | 'diagram'>('selection')
+// 已挂载过的步骤集合：用于实现"首次进入挂载、之后用 v-show 切换"的缓存策略，避免重复挂载导致的卡顿
+const visitedSteps = ref<Set<'selection' | 'strategy' | 'diagram'>>(new Set(['selection']))
+watch(wizardStep, (s) => { visitedSteps.value.add(s) })
 const STEPS = [
   { key: 'selection' as const, titleKey: 'scheme.steps.selection', subKey: 'scheme.steps.selectionDesc' },
   { key: 'strategy' as const, titleKey: 'scheme.steps.strategy', subKey: 'scheme.steps.tba' },
   { key: 'diagram' as const, titleKey: 'scheme.steps.diagram', subKey: 'scheme.steps.tba' },
 ]
 const stepIdx = computed(() => STEPS.findIndex((s) => s.key === wizardStep.value))
-function gotoStep(key: 'selection' | 'strategy' | 'diagram') {
+const building = ref<Building | null>(null)
+const dirtyByStep = reactive<Record<StrategyStep, boolean>>({
+  selection: false,
+  strategy: false,
+  diagram: false,
+})
+
+function syncDirtyFlag() {
+  store.dirty = dirtyByStep.selection || dirtyByStep.strategy || dirtyByStep.diagram
+}
+
+function setStepDirty(step: StrategyStep, value: boolean) {
+  dirtyByStep[step] = value
+  syncDirtyFlag()
+}
+
+function clearAllDirty() {
+  dirtyByStep.selection = false
+  dirtyByStep.strategy = false
+  dirtyByStep.diagram = false
+  syncDirtyFlag()
+}
+
+function revertStep(step: StrategyStep) {
+  const s = store.activeScheme
+  if (!s) return
+  suppressDirty = true
+  if (step === 'selection') {
+    local.name = s.name
+    local.subsystems = JSON.parse(JSON.stringify(s.subsystems || [])) as Subsystem[]
+  } else if (step === 'strategy') {
+    local.safety_margin = s.safety_margin
+    local.control_strategy = ensureControlStrategy(
+      s.control_strategy,
+      s.subsystems || [],
+      store.derived?.subsystems,
+      building.value?.zones || [],
+    )
+  }
+  void nextTick(() => {
+    suppressDirty = false
+    setStepDirty(step, false)
+  })
+}
+
+/**
+ * Switch the active wizard step (设备选型 / 控制策略 / 系统图).
+ * Each step owns a separate save scope; the current Save button only
+ * persists data of the currently visible step. So switching to another
+ * step while there are unsaved edits should ask the user to confirm just
+ * like the “leave page” guard does.
+ */
+async function gotoStep(key: 'selection' | 'strategy' | 'diagram') {
+  if (key === wizardStep.value) return
+  if (dirtyByStep[wizardStep.value]) {
+    try {
+      await ElMessageBox.confirm(
+        t('scheme.leaveWarning'),
+        t('common.warning'),
+        { type: 'warning', confirmButtonText: t('common.leave'), cancelButtonText: t('common.stay') },
+      )
+    } catch {
+      // user cancelled — stay on the current step
+      return
+    }
+    revertStep(wizardStep.value)
+  }
   wizardStep.value = key
 }
 
@@ -52,8 +143,14 @@ const activeSubIdx = ref(0)
 const local = reactive<{
   name: string
   safety_margin: number
+  control_strategy: ControlStrategy
   subsystems: Subsystem[]
-}>({ name: '', safety_margin: 1.0, subsystems: [] })
+}>({
+  name: '',
+  safety_margin: 1.0,
+  control_strategy: ensureControlStrategy({}, [], null, []),
+  subsystems: [],
+})
 
 // Internal flags used by syncFromStore + the local watcher to avoid the
 // "saved but still dirty" loop. Declared up front so syncFromStore can
@@ -73,11 +170,17 @@ function syncFromStore() {
   local.name = s.name
   local.safety_margin = s.safety_margin
   local.subsystems = JSON.parse(JSON.stringify(s.subsystems || [])) as Subsystem[]
+  local.control_strategy = ensureControlStrategy(
+    s.control_strategy,
+    s.subsystems || [],
+    store.derived?.subsystems,
+    building.value?.zones || [],
+  )
   if (activeSubIdx.value >= local.subsystems.length) activeSubIdx.value = 0
   void nextTick(() => {
     suppressDirty = false
     // Force-clear in case the watcher already queued a markDirty earlier.
-    store.dirty = false
+    clearAllDirty()
   })
 }
 
@@ -89,33 +192,44 @@ function onNameBlur() {
   }
 }
 
-// ---- 自动保存 + 实时刷新派生数据（debounce 700ms） ----
+// ---- 实时校验与脱水状态跟踪（不再自动保存） ----
+// 以前这里会在 700ms 间隔后静默执行 store.save，导致
+// store.dirty 总是被清零，“未保存提醒”几乎不会触发。
+// 现在其他都保留（debounce 后调用 dry-run validate-payload 刷新高亮），
+// 但不再自动提交，从而保留 dirty 标记。
 watch(
-  () => [local.name, local.safety_margin, local.subsystems] as const,
+  () => [local.name, local.subsystems] as const,
   () => {
     if (!store.activeScheme) return
     if (suppressDirty || autoSaving) return
-    store.markDirty()
+    setStepDirty('selection', true)
     if (autoSaveTimer) clearTimeout(autoSaveTimer)
     autoSaveTimer = setTimeout(async () => {
       if (!local.name.trim()) return
-      autoSaving = true
       try {
-        // Pre-validate: skip the actual save when errors exist; keep the
-        // unsaved changes so user can fix the highlighted problems. We still
-        // refresh `validation` so alerts update in real time.
-        const payload = buildPayload()
-        const pre = await store.validatePayload(schemeId.value, payload)
-        const hasError = pre.issues.some((i) => i.severity === 'error')
-        if (hasError) return
-        await store.save(schemeId.value, payload)
-        syncFromStore()
-        // 自动保存后同步刷新校验，避免就地高亮因 ID 失配而消失
-        await store.validateActive(schemeId.value)
+        // Refresh validation-only so inline highlights stay in sync with edits.
+        const payload = buildSelectionPayload()
+        await store.validatePayload(schemeId.value, payload)
       } catch {
-        // ignore auto-save errors silently
-      } finally {
-        autoSaving = false
+        // ignore background validation errors silently
+      }
+    }, 700)
+  },
+  { deep: true },
+)
+
+watch(
+  () => [local.safety_margin, local.control_strategy] as const,
+  () => {
+    if (!store.activeScheme) return
+    if (suppressDirty || autoSaving) return
+    setStepDirty('strategy', true)
+    if (autoSaveTimer) clearTimeout(autoSaveTimer)
+    autoSaveTimer = setTimeout(async () => {
+      try {
+        await store.validateStrategyPayloadOnly(schemeId.value, buildStrategyPayload())
+      } catch {
+        // ignore background validation errors silently
       }
     }, 700)
   },
@@ -130,6 +244,56 @@ const newSubName = ref('')
 
 const selectMode = ref(false)
 const selectedIdx = ref<Set<number>>(new Set())
+
+// Per-subsystem expanded state. Default: all collapsed on initial load to keep
+// first-paint snappy when the scheme has multiple subsystems with many combos.
+// Newly added subsystems are auto-expanded so the user can immediately edit.
+const expandedSubs = ref<Set<string>>(new Set())
+// 已挂载过的子系统：一旦展开，便保留挂载，后续折叠/再展开仅切换 v-show，避免重复挂载导致卡顿。
+const mountedSubs = ref<Set<string>>(new Set())
+function subKey(sub: Subsystem, idx: number): string {
+  return sub.id || `idx-${idx}`
+}
+function isSubExpanded(sub: Subsystem, idx: number): boolean {
+  return expandedSubs.value.has(subKey(sub, idx))
+}
+function isSubMounted(sub: Subsystem, idx: number): boolean {
+  return mountedSubs.value.has(subKey(sub, idx))
+}
+function toggleSubExpanded(sub: Subsystem, idx: number) {
+  const k = subKey(sub, idx)
+  const s = new Set(expandedSubs.value)
+  if (s.has(k)) {
+    s.delete(k)
+  } else {
+    s.add(k)
+    if (!mountedSubs.value.has(k)) {
+      // 先让骨架同步绘制，再延迟两帧 + 一个微任务挂载真实组件，
+      // 给浏览器留出充分时间完成首次绘制，确保用户立刻看到反馈。
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const m = new Set(mountedSubs.value)
+          m.add(k)
+          mountedSubs.value = m
+        })
+      })
+    }
+  }
+  expandedSubs.value = s
+}
+function expandAllSubs() {
+  const keys = local.subsystems.map((s, i) => subKey(s, i))
+  expandedSubs.value = new Set(keys)
+  // 同步标记为已挂载，下一帧统一挂载重组件，避免阻塞当前点击。
+  requestAnimationFrame(() => {
+    const m = new Set(mountedSubs.value)
+    keys.forEach((k) => m.add(k))
+    mountedSubs.value = m
+  })
+}
+function collapseAllSubs() {
+  expandedSubs.value = new Set()
+}
 
 function toggleSelectMode() {
   selectMode.value = !selectMode.value
@@ -180,21 +344,51 @@ function defaultDesignParams(typ: SubsystemType): Record<string, unknown> {
 function confirmAddSub() {
   const idx = local.subsystems.length + 1
   const name = newSubName.value.trim() || `${t('scheme.types.' + newSubType.value)} ${idx}`
+  const newId = crypto.randomUUID()
+  // 默认创建一个组合：冷机 + 冷冻水泵 + 冷却水泵（chiller_plant）/
+  // 风冷模块 + 水泵（air_cooled）。结构与 ComboEditor.addCombo 中保持一致，
+  // 避免子系统创建后空白无组合。
+  const defaultCombo = {
+    id: crypto.randomUUID(),
+    combo_index: 1,
+    primary_model_id: null,
+    primary_count: 1,
+    primary_factor: 0.92,
+    group_count: 1,
+    chw_pump_model_id: null,
+    chw_pump_count: 1,
+    chw_pump_backup: 0,
+    chw_connection: 'direct' as const,
+    chw_pump_factor: 0.77,
+    cw_pump_model_id: null,
+    cw_pump_count: 1,
+    cw_pump_backup: 0,
+    cw_connection: 'direct' as const,
+    cw_pump_factor: 0.77,
+  }
   local.subsystems.push({
     // Pre-assign a stable id so dry-run /validate-payload can echo
     // subsystem_id back and ComboEditor / TowerGroupEditor can match
     // issues to this subsystem before the first save round-trip.
-    id: crypto.randomUUID(),
+    id: newId,
     subsystem_index: idx,
     subsystem_type: newSubType.value,
     name,
     design_params: defaultDesignParams(newSubType.value),
-    combos: [],
+    combos: [defaultCombo],
     tower_groups: newSubType.value === 'chiller_plant'
       ? [{ id: crypto.randomUUID(), group_index: 1, tower_model_id: null, count: 1, factor: 0.85 }]
       : [],
   })
   activeSubIdx.value = local.subsystems.length - 1
+  // Auto-expand the newly added subsystem so the user can edit immediately.
+  const s = new Set(expandedSubs.value)
+  s.add(newId)
+  expandedSubs.value = s
+  // 新加项立即标记为已挂载，避免首次展开时再延迟一帧。
+  const m = new Set(mountedSubs.value)
+  m.add(newId)
+  mountedSubs.value = m
   addSubDialogVisible.value = false
 }
 
@@ -243,11 +437,17 @@ async function removeSelected() {
 // ----- save -----
 const saving = ref(false)
 
-function buildPayload(): SystemSchemeUpdate {
+function buildSelectionPayload(): SystemSchemeUpdate {
   return {
     name: local.name,
-    safety_margin: local.safety_margin,
     subsystems: local.subsystems,
+  }
+}
+
+function buildStrategyPayload(): SystemSchemeUpdate {
+  return {
+    safety_margin: local.safety_margin,
+    control_strategy: normalizedControlStrategy.value,
   }
 }
 
@@ -260,13 +460,18 @@ function locateFirstIssue(rep: { issues: Array<{ severity: string; subsystem_id?
   if (!rep.issues.length) return
   const errors = rep.issues.filter((i) => i.severity === 'error')
   const first = errors[0] || rep.issues[0]
+  const isStrategyIssue = (first as { field?: string | null }).field?.startsWith('control_strategy')
+  if (isStrategyIssue) wizardStep.value = 'strategy'
   if (first.subsystem_id) {
     const tabIdx = local.subsystems.findIndex((s) => s.id === first.subsystem_id)
     if (tabIdx >= 0) activeSubIdx.value = tabIdx
   }
   setTimeout(() => {
     let target: Element | null = null
-    if (errors.length) {
+    if (isStrategyIssue) {
+      target = document.querySelector('.strategy-page .el-alert--error')
+        || document.querySelector('.strategy-page .el-alert--warning')
+    } else if (errors.length) {
       // Priority: per-row red highlight > orphan subsystem-level error block
       // > any error alert anywhere on the page.
       target = document.querySelector('.combo-block.has-error, .tower-row.has-error')
@@ -286,30 +491,51 @@ async function save() {
   }
   saving.value = true
   try {
-    // 1) Dry-run validate the unsaved payload first. If any errors exist,
-    //    refuse to save and locate the first one. Warnings do not block save.
-    const payload = buildPayload()
-    const pre = await store.validatePayload(schemeId.value, payload)
-    const preErrors = pre.issues.filter((i) => i.severity === 'error')
-    if (preErrors.length) {
-      ElMessage.error(t('scheme.saveBlockedByErrors', { n: preErrors.length }))
-      locateFirstIssue(pre)
+    if (wizardStep.value === 'selection') {
+      const payload = buildSelectionPayload()
+      const pre = await store.validatePayload(schemeId.value, payload)
+      const preErrors = pre.issues.filter((i) => i.severity === 'error')
+      if (preErrors.length) {
+        ElMessage.error(t('scheme.saveBlockedByErrors', { n: preErrors.length }))
+        locateFirstIssue(pre)
+        return
+      }
+      await store.save(schemeId.value, payload)
+      syncFromStore()
+      const rep = await store.validateActive(schemeId.value)
+      ElMessage.success(t('common.saved'))
+      if (rep.issues.length) {
+        const warns = rep.issues.filter((i) => i.severity === 'warning')
+        if (warns.length) {
+          ElMessage.warning(t('scheme.savedWithWarnings', { n: warns.length }))
+        }
+        locateFirstIssue(rep)
+      }
       return
     }
-    // 2) Persist + refresh derived/summary, then run server validation again
-    //    on the saved scheme so highlights stay accurate.
-    await store.save(schemeId.value, payload)
-    syncFromStore()
-    const rep = await store.validateActive(schemeId.value)
-    ElMessage.success(t('common.saved'))
-    if (rep.issues.length) {
-      const warns = rep.issues.filter((i) => i.severity === 'warning')
-      if (warns.length) {
-        // Save succeeded but there are warnings to review.
-        ElMessage.warning(t('scheme.savedWithWarnings', { n: warns.length }))
+    if (wizardStep.value === 'strategy') {
+      const payload = buildStrategyPayload()
+      const pre = await store.validateStrategyPayloadOnly(schemeId.value, payload)
+      const preErrors = pre.issues.filter((i) => i.severity === 'error')
+      if (preErrors.length) {
+        ElMessage.error(t('scheme.saveBlockedByErrors', { n: preErrors.length }))
+        locateFirstIssue(pre)
+        return
       }
-      locateFirstIssue(rep)
+      await store.save(schemeId.value, payload)
+      syncFromStore()
+      const rep = await store.validateStrategyActive(schemeId.value)
+      ElMessage.success(t('common.saved'))
+      if (rep.issues.length) {
+        const warns = rep.issues.filter((i) => i.severity === 'warning')
+        if (warns.length) {
+          ElMessage.warning(t('scheme.savedWithWarnings', { n: warns.length }))
+        }
+        locateFirstIssue(rep)
+      }
+      return
     }
+    ElMessage.warning(t('scheme.steps.tba'))
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || t('common.error'))
   } finally {
@@ -352,7 +578,17 @@ onMounted(async () => {
     wsContent.style.overflow = 'hidden'
   }
   await store.fetchDetail(schemeId.value)
+  // 先用 scheme 数据立即渲染页面（设备选型不依赖 building 详情）
   syncFromStore()
+  // 后台并发拉取 building，到达后重新同步 control_strategy 的 zones
+  if (store.activeScheme?.building_id) {
+    getBuilding(projectId.value, store.activeScheme.building_id)
+      .then(({ data }) => {
+        building.value = data
+        syncFromStore()
+      })
+      .catch(() => { building.value = null })
+  }
 })
 
 onBeforeUnmount(() => {
@@ -420,8 +656,8 @@ const capacityShortMessage = computed(() => {
 
     <!-- ============== STEP BODY ============== -->
     <el-card class="ssd-body" shadow="never">
-      <el-form label-position="top" :inline="false" @submit.prevent>
-      <template v-if="wizardStep === 'selection'">
+      <div v-if="visitedSteps.has('selection')" v-show="wizardStep === 'selection'">
+        <el-form label-position="top" :inline="false" @submit.prevent>
         <!-- KPI: 冷热负荷 vs 装机容量（紧凑单行展示） -->
         <div class="sel-kpi">
           <div class="sel-kpi-group" :class="{ 'sel-kpi--short': coolingShort }">
@@ -526,7 +762,7 @@ const capacityShortMessage = computed(() => {
             v-for="(sub, idx) in local.subsystems"
             :key="idx"
             class="sub-block"
-            :class="{ 'sub-block--selected': selectMode && selectedIdx.has(idx) }"
+            :class="{ 'sub-block--selected': selectMode && selectedIdx.has(idx), 'sub-block--collapsed': !isSubExpanded(sub, idx) }"
           >
             <div class="sub-block-head">
               <div class="sub-block-head-left">
@@ -534,6 +770,13 @@ const capacityShortMessage = computed(() => {
                   v-if="selectMode"
                   :model-value="selectedIdx.has(idx)"
                   @change="toggleSelect(idx)"
+                />
+                <el-button
+                  size="small"
+                  text
+                  :icon="isSubExpanded(sub, idx) ? ArrowDown : ArrowRight"
+                  class="sub-toggle-btn"
+                  @click="toggleSubExpanded(sub, idx)"
                 />
                 <span class="sub-idx">#{{ idx + 1 }}</span>
                 <el-input
@@ -545,6 +788,16 @@ const capacityShortMessage = computed(() => {
                 <el-tag size="small" type="info" effect="plain">
                   {{ t('scheme.types.' + sub.subsystem_type) }}
                 </el-tag>
+                <span v-if="!isSubExpanded(sub, idx)" class="sub-collapsed-info">
+                  <template v-for="d in [store.derived?.subsystems?.find(x => x.id === sub.id)]" :key="d?.id || idx">
+                    <template v-if="d?.cooling_capacity_total">
+                      · 制冷量 {{ d.cooling_capacity_total }} kW
+                    </template>
+                    <template v-if="d?.heating_capacity_total">
+                      · 制热量 {{ d.heating_capacity_total }} kW
+                    </template>
+                  </template>
+                </span>
               </div>
               <div class="sub-block-head-right">
                 <el-button
@@ -561,28 +814,47 @@ const capacityShortMessage = computed(() => {
             </div>
 
             <SubsystemEditor
+              v-if="isSubMounted(sub, idx)"
+              v-show="isSubExpanded(sub, idx)"
               v-model="local.subsystems[idx]"
               :derived="store.derived?.subsystems.find((d) => d.id === sub.id) || null"
               :issues="visibleIssues.filter((iss) => iss.subsystem_id === sub.id)"
             />
+            <!-- 首次展开的过渡骨架：mountedSubs 翻 true 之前先展示，
+                 让用户立即看到反馈，避免 1+ s 的"按了没反应"错觉。 -->
+            <div
+              v-else-if="isSubExpanded(sub, idx)"
+              class="sub-skeleton"
+            >
+              <el-skeleton :rows="3" animated />
+              <el-skeleton :rows="6" animated style="margin-top: 12px" />
+            </div>
           </div>
         </div>
 
         <!-- 校验报告改为就地高亮，无需此处单独表格 -->
-      </template>
+        </el-form>
+      </div>
 
-      <template v-else-if="wizardStep === 'strategy'">
-        <el-empty :image-size="120" :description="t('scheme.steps.strategyTba')">
-          <el-button disabled>{{ t('scheme.steps.tba') }}</el-button>
-        </el-empty>
-      </template>
+      <div v-if="visitedSteps.has('strategy')" v-show="wizardStep === 'strategy'">
+        <ControlStrategyEditor
+          :model-value="normalizedControlStrategy"
+          :safety-margin="local.safety_margin"
+          :subsystems="local.subsystems"
+          :derived="store.derived?.subsystems || null"
+          :summary="store.summary"
+          :zones="building?.zones || []"
+          :issues="strategyIssues"
+          @update:model-value="(value) => { local.control_strategy = value }"
+          @update:safety-margin="(value) => { local.safety_margin = value }"
+        />
+      </div>
 
-      <template v-else>
+      <div v-if="wizardStep === 'diagram'">
         <el-empty :image-size="120" :description="t('scheme.steps.diagramTba')">
           <el-button disabled>{{ t('scheme.steps.tba') }}</el-button>
         </el-empty>
-      </template>
-      </el-form>
+      </div>
     </el-card>
 
     <!-- Add Subsystem dialog -->
@@ -715,9 +987,13 @@ const capacityShortMessage = computed(() => {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  /* 始终预留竖向滚动条空间，避免子系统折叠/展开时滚动条出现/消失导致内容横向跳动。 */
+  scrollbar-gutter: stable;
 }
 .ssd-body :deep(.el-card__body) {
   padding: 10px 12px;
+  /* el-card 自身的 body 也是潜在滚动容器，同样预留 gutter。 */
+  scrollbar-gutter: stable;
 }
 
 /* Hide +/- on ALL el-input-number inside body (设计参数/组合/冷却塔) */
@@ -856,6 +1132,10 @@ const capacityShortMessage = computed(() => {
 }
 .sub-block:hover {
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+}
+.sub-skeleton {
+  margin-top: 12px;
+  padding: 8px 0;
 }
 .sub-block--selected {
   border-color: #f59e0b;

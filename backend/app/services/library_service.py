@@ -351,6 +351,37 @@ async def load_equipment_by_ids(
     return result
 
 
+async def load_equipment_by_typed_ids(
+    db: AsyncSession,
+    typed_ids: dict[str, list[uuid.UUID]],
+) -> dict[uuid.UUID, EquipmentRecord]:
+    """Load equipment using known type→ids mapping; skips empty tables.
+
+    Falls back to the legacy ``equipment_models`` table for any id that wasn't
+    found in its typed table (preserves backward compatibility for old refs).
+    """
+    result: dict[uuid.UUID, EquipmentRecord] = {}
+    leftover: set[uuid.UUID] = set()
+    for eq_type, ids in typed_ids.items():
+        if not ids:
+            continue
+        unique_ids = list(dict.fromkeys(ids))
+        typed_model = _TYPED_EQUIPMENT_MODEL_MAP.get(eq_type)
+        if typed_model is None:
+            leftover.update(unique_ids)
+            continue
+        rows = (await db.execute(select(typed_model).where(typed_model.id.in_(unique_ids)))).scalars().all()
+        found = {row.id for row in rows}
+        for row in rows:
+            result.setdefault(row.id, row)
+        leftover.update(uid for uid in unique_ids if uid not in found)
+    if leftover:
+        rows = (await db.execute(select(EquipmentModel).where(EquipmentModel.id.in_(list(leftover))))).scalars().all()
+        for row in rows:
+            result.setdefault(row.id, row)
+    return result
+
+
 async def create_equipment(db: AsyncSession, owner_id: uuid.UUID, is_admin: bool, data: dict) -> EquipmentModel:
     is_public = bool(data.get("is_public")) and is_admin
     eq = EquipmentModel(

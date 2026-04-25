@@ -1,8 +1,13 @@
+import type { BuildingZone, DaySchedule } from '@/types/building'
+
 // System scheme types — 项目级方案 + 子系统层级 (post-restructure)
 
 export type SubsystemType = 'chiller_plant' | 'air_cooled' | 'shared_tower'
 export type ConnectionType = 'direct' | 'parallel'
 export type PipeSystem = 'two_pipe' | 'four_pipe'
+export type StrategyStep = 'selection' | 'strategy' | 'diagram'
+export type LoadDistributionMode = 'fixed_ratio' | 'by_priority' | 'other'
+export type StrategyProfileMode = 'fixed' | 'by_month' | 'by_load' | 'by_dry_bulb' | 'by_wet_bulb' | 'constant_pressure'
 
 // ---------------- Combo & TowerGroup ----------------
 
@@ -73,6 +78,136 @@ export interface Subsystem {
   tower_groups: SchemeTowerGroup[]
 }
 
+// ---------------- Control strategy ----------------
+
+export interface StrategyValueProfile {
+  mode: StrategyProfileMode
+  fixed_value: number
+  month_values: number[]
+  load_values: number[]
+  dry_bulb_values: number[]
+  wet_bulb_values: number[]
+  constant_pressure: boolean
+}
+
+export interface LoadDistributionGroup {
+  id: string
+  name: string
+}
+
+export interface LoadDistributionGroupSetting {
+  mode?: LoadDistributionMode
+  ratios: Record<string, number>
+  priorities: Record<string, number>
+}
+
+export interface LoadDistributionConfig {
+  mode: LoadDistributionMode
+  groups: LoadDistributionGroup[]
+  zone_group_map: Record<string, string>
+  subsystem_group_map: Record<string, string>
+  group_settings: Record<string, LoadDistributionGroupSetting>
+}
+
+export interface StrategyStageBase {
+  id: string
+  combo_counts: Record<string, number>
+  loading_down: number | null
+  loading_up: number | null
+  cooling_capacity_total: number
+  cooling_capacity_min: number | null
+  cooling_capacity_max: number | null
+}
+
+export interface ChillerStage extends StrategyStageBase {}
+
+export interface AirCooledStage extends StrategyStageBase {
+  heating_capacity_total: number
+  heating_capacity_min: number | null
+  heating_capacity_max: number | null
+}
+
+export interface PumpStrategy {
+  min_freq: number
+  max_freq: number
+}
+
+export interface TowerStrategy extends PumpStrategy {
+  m: number
+  k: number
+}
+
+export interface ChillerPlantStrategy {
+  subsystem_id: string
+  subsystem_type: 'chiller_plant'
+  run_schedules: DaySchedule[]
+  water_temp: {
+    chw_supply: StrategyValueProfile
+    chw_delta: StrategyValueProfile
+    approach: StrategyValueProfile
+    cw_delta: StrategyValueProfile
+  }
+  equipment: {
+    chiller_stages: ChillerStage[]
+    chw_pump: PumpStrategy
+    cw_pump: PumpStrategy
+    tower: TowerStrategy
+  }
+}
+
+export interface AirCooledStrategy {
+  subsystem_id: string
+  subsystem_type: 'air_cooled'
+  run_schedules: DaySchedule[]
+  water_temp: {
+    cooling_supply: StrategyValueProfile
+    cooling_delta: StrategyValueProfile
+    heating_supply: StrategyValueProfile
+    heating_delta: StrategyValueProfile
+  }
+  equipment: {
+    module_stages: AirCooledStage[]
+    pump?: PumpStrategy
+    chw_pump?: PumpStrategy
+    hw_pump?: PumpStrategy
+  }
+}
+
+export interface SharedTowerStrategy {
+  subsystem_id: string
+  subsystem_type: 'shared_tower'
+  run_schedules: DaySchedule[]
+  water_temp: Record<string, never>
+  equipment: Record<string, never>
+}
+
+export type SubsystemControlStrategy = ChillerPlantStrategy | AirCooledStrategy | SharedTowerStrategy
+
+export interface ControlStrategy {
+  version: number
+  load_distribution: LoadDistributionConfig
+  system_strategies: Record<string, SubsystemControlStrategy>
+}
+
+export interface StrategyZoneSummary {
+  key: string
+  name: string
+  area: number
+  cooling_peak_est: number
+  heating_peak_est: number
+  source: BuildingZone
+}
+
+export interface StrategyGroupStat {
+  group_id: string
+  zone_count: number
+  subsystem_count: number
+  cooling_load_est: number
+  heating_load_est: number
+  cooling_capacity_total: number
+  heating_capacity_total: number
+}
+
 // ---------------- Scheme (project-level) ----------------
 
 export interface SystemScheme {
@@ -81,7 +216,7 @@ export interface SystemScheme {
   building_id: string
   scheme_index: number
   name: string
-  control_strategy: Record<string, unknown>
+  control_strategy: ControlStrategy
   diagram_json: Record<string, unknown>
   safety_margin: number
   subsystems: Subsystem[]
@@ -94,7 +229,7 @@ export interface SystemSchemeCreate {
   building_id: string
   scheme_index: number
   safety_margin?: number
-  control_strategy?: Record<string, unknown>
+  control_strategy?: ControlStrategy
   diagram_json?: Record<string, unknown>
   subsystems?: Subsystem[]
 }

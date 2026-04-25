@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import EquipmentPicker from './EquipmentPicker.vue'
@@ -123,6 +123,35 @@ function cleanMsg(msg: string): string {
 
 const isAirCooled = computed(() => props.schemeType === 'air_cooled')
 const isFourPipe = computed(() => props.pipeSystem === 'four_pipe')
+
+// 渐进式渲染 combo 块：首帧仅贴到 INITIAL_VISIBLE 个，之后用 setTimeout
+// 在每帧之间留出绘制时间，让浏览器在两批之间完成一次合成，避免一次性挂载
+// 10 个 combo 造成主线程冻结。
+const INITIAL_VISIBLE = 1
+const STEP = 1
+const STEP_DELAY_MS = 32
+const visibleCount = ref(0)
+function scheduleProgressiveRender() {
+  const total = combos.value.length
+  visibleCount.value = Math.min(INITIAL_VISIBLE, total)
+  if (visibleCount.value >= total) return
+  const tick = () => {
+    if (visibleCount.value >= combos.value.length) return
+    visibleCount.value = Math.min(visibleCount.value + STEP, combos.value.length)
+    if (visibleCount.value < combos.value.length) {
+      setTimeout(tick, STEP_DELAY_MS)
+    }
+  }
+  setTimeout(tick, STEP_DELAY_MS)
+}
+onMounted(scheduleProgressiveRender)
+// 当用户点击“新增组合”时，应立即让新组合可见。
+watch(
+  () => combos.value.length,
+  (n, prev) => {
+    if (n > prev && visibleCount.value >= prev) visibleCount.value = n
+  },
+)
 </script>
 
 <template>
@@ -136,7 +165,8 @@ const isFourPipe = computed(() => props.pipeSystem === 'four_pipe')
       </div>
     </template>
 
-    <div v-for="(combo, idx) in combos" :key="idx" class="combo-block" :class="{ 'has-error': issuesFor(idx).some((i) => i.severity === 'error') }">
+    <template v-for="(combo, idx) in combos" :key="idx">
+      <div v-if="idx < visibleCount" class="combo-block" :class="{ 'has-error': issuesFor(idx).some((i) => i.severity === 'error') }">
       <div class="combo-block-head">
         <strong>{{ t('scheme.combo.index') }} #{{ combo.combo_index }}</strong>
         <div class="combo-head-actions">
@@ -308,6 +338,7 @@ const isFourPipe = computed(() => props.pipeSystem === 'four_pipe')
 
       <el-divider v-if="idx < combos.length - 1" />
     </div>
+    </template>
 
     <!-- 厂家参数弹窗 -->
     <el-dialog

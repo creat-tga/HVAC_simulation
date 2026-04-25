@@ -68,11 +68,9 @@ function ensureLoaded() {
     void store.load(props.equipmentType)
   }
 }
-watch(
-  () => props.equipmentType,
-  () => ensureLoaded(),
-  { immediate: true },
-)
+// 不在挂载时立即拉取设备库；仅在用户首次打开 popup（@visible-change）
+// 或 modelValue 已有但缓存缺失（下方 watch）时才加载，
+// 避免子系统首次展开时 N 个 EquipmentPicker 同时触发请求与解析阻塞。
 
 function paramNum(eq: EquipmentBrief, key: string): number {
   const v = (eq.parameters as Record<string, unknown> | null)?.[key]

@@ -7,7 +7,7 @@
  *
  * 通过 v-model 双向绑定整个 Subsystem 对象到父组件。
  */
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import DesignParamsForm from './DesignParamsForm.vue'
 import ComboEditor from './ComboEditor.vue'
 import TowerGroupEditor from './TowerGroupEditor.vue'
@@ -55,6 +55,18 @@ const subsystemLevelIssues = computed<ValidationIssue[]>(() => {
 const hasSubsystemError = computed(() =>
   subsystemLevelIssues.value.some((i) => i.severity === 'error'),
 )
+
+// 延后挂载下方重型编辑器：先让 DesignParamsForm 渲染出来，浏览器完成首帧绘制后再挂载
+// ComboEditor / TowerGroupEditor，避免展开子系统时主线程一次性冻结。
+const heavyReady = ref(false)
+onMounted(() => {
+  // 两帧 + 微任务间隔，确保 DesignParamsForm 已提交绘制。
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      heavyReady.value = true
+    })
+  })
+})
 </script>
 
 <template>
@@ -84,6 +96,7 @@ const hasSubsystemError = computed(() =>
     />
 
     <ComboEditor
+      v-if="heavyReady"
       class="mt"
       :model-value="modelValue.combos"
       :scheme-type="modelValue.subsystem_type"
@@ -94,7 +107,7 @@ const hasSubsystemError = computed(() =>
     />
 
     <TowerGroupEditor
-      v-if="modelValue.subsystem_type === 'chiller_plant'"
+      v-if="heavyReady && modelValue.subsystem_type === 'chiller_plant'"
       class="mt"
       :model-value="modelValue.tower_groups"
       :derived="derived"

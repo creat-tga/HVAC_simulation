@@ -26,6 +26,7 @@ const props = defineProps<{
   peakValue?: number
   unit?: string
   paramLabel?: string
+  mode?: 'percent' | 'binary'
 }>()
 
 const emit = defineEmits<{
@@ -240,11 +241,50 @@ function presetClear() {
   patch({ hourly_ratios: Array(24).fill(0) })
 }
 
+// ===== mode (percent for building load schedules, binary on/off for HVAC run schedule) =====
+const isBinary = computed(() => props.mode === 'binary')
+
 // ===== heatmap cell style =====
 function cellStyle(_h: number, val: number) {
+  if (isBinary.value) {
+    const on = val >= 50
+    return { backgroundColor: on ? `rgba(${palette.value.rgb}, 0.85)` : 'rgba(148, 163, 184, 0.12)' }
+  }
   const ratio = Math.max(0, Math.min(100, val)) / 100
   const alpha = ratio === 0 ? 0.06 : 0.18 + ratio * 0.82
   return { backgroundColor: `rgba(${palette.value.rgb}, ${alpha})` }
+}
+
+// ===== binary paint drag =====
+const paintState = ref<{ target: number; lastHour: number } | null>(null)
+function onBinaryMouseDown(e: MouseEvent, h: number) {
+  if (e.button !== 0) return
+  e.preventDefault()
+  const cur = ratios.value[h] ?? 0
+  const target = cur >= 50 ? 0 : 100
+  const arr = [...ratios.value]
+  arr[h] = target
+  patch({ hourly_ratios: arr })
+  paintState.value = { target, lastHour: h }
+  window.addEventListener('mousemove', onBinaryPaintMove)
+  window.addEventListener('mouseup', onBinaryPaintEnd)
+}
+function onBinaryPaintMove(e: MouseEvent) {
+  if (!paintState.value) return
+  const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+  const cellEl = el?.closest('[data-hour]') as HTMLElement | null
+  if (!cellEl) return
+  const h = Number(cellEl.dataset.hour)
+  if (Number.isNaN(h) || h === paintState.value.lastHour) return
+  const arr = [...ratios.value]
+  arr[h] = paintState.value.target
+  patch({ hourly_ratios: arr })
+  paintState.value.lastHour = h
+}
+function onBinaryPaintEnd() {
+  paintState.value = null
+  window.removeEventListener('mousemove', onBinaryPaintMove)
+  window.removeEventListener('mouseup', onBinaryPaintEnd)
 }
 
 // ===== click-outside to commit edit =====
@@ -297,8 +337,9 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
     />
 
     <!-- date / weekday -->
-    <div class="meta-row">
-        <div class="meta-label">生效日期</div>
+    <div class="meta-row-wrap">
+      <div class="meta-row">
+          <div class="meta-label">日期</div>
       <div class="meta-controls">
         <el-select v-model="startMonth" size="small" class="meta-select">
           <el-option v-for="m in months" :key="m.v" :value="m.v" :label="m.label" />
@@ -317,7 +358,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
     </div>
 
     <div class="meta-row">
-        <div class="meta-label">生效星期</div>
+        <div class="meta-label">星期</div>
       <div class="weekday-pills">
         <button type="button"
           v-for="(label, i) in weekdayLabels"
@@ -330,10 +371,11 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
         </button>
       </div>
     </div>
+    </div>
 
     <!-- heatmap with always-on top values (numbers are click-to-edit) -->
-    <div class="heatmap-wrap">
-      <div class="hm-values">
+    <div class="heatmap-wrap" :class="{ 'is-binary': isBinary }">
+      <div class="hm-values" v-if="!isBinary">
         <template v-for="(val, h) in ratios" :key="`v-${h}`">
           <div
             v-if="editingHour === h"
@@ -366,11 +408,12 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
           v-for="(val, h) in ratios"
           :key="h"
           class="hm-cell"
-          :class="{ 'is-zero': val === 0 }"
+          :class="{ 'is-zero': val === 0, 'is-on': isBinary && val >= 50 }"
           :style="cellStyle(h, val)"
-          @mousedown="onCellMouseDown($event, h)"
-          @dblclick="onCellDblClick(h)"
-          title="上下拖动调整数值"
+          :data-hour="h"
+          @mousedown="isBinary ? onBinaryMouseDown($event, h) : onCellMouseDown($event, h)"
+          @dblclick="!isBinary && onCellDblClick(h)"
+          :title="isBinary ? '点击切换开关，按住拖动批量设置' : '上下拖动调整数值'"
         ></div>
       </div>
       <div class="hm-ticks">
@@ -389,8 +432,11 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
       <button type="button" class="tb-btn tb-btn-danger" @click="presetClear">清空</button>
     </div>
 
-    <div class="sched-foot">
+    <div class="sched-foot" v-if="!isBinary">
       点击上方数字编辑 · 上下拖动柱子调整 · 双击柱子归零
+    </div>
+    <div class="sched-foot" v-else>
+      点击切换开关 · 按住拖动批量设置
     </div>
   </div>
 </template>
@@ -500,16 +546,23 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
 }
 
 /* ===== meta rows (date / weekdays) ===== */
+.meta-row-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 32px;
+  align-items: center;
+}
 .meta-row {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .meta-label {
   font-size: 12px;
   color: #71717a;
   font-weight: 500;
-  width: 72px;
   flex-shrink: 0;
 }
 .meta-controls {
@@ -631,6 +684,20 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
   gap: 4px;
   height: 56px;
   user-select: none;
+}
+.heatmap-wrap.is-binary .heatmap-row {
+  height: 24px;
+  gap: 3px;
+}
+.heatmap-wrap.is-binary .hm-cell {
+  cursor: pointer;
+  border-radius: 3px;
+}
+.heatmap-wrap.is-binary .hm-cell.is-on:hover {
+  filter: brightness(0.95);
+}
+.heatmap-wrap.is-binary .hm-cell:not(.is-on):hover {
+  background: rgba(148, 163, 184, 0.25) !important;
 }
 .hm-cell {
   border-radius: 4px;
