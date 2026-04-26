@@ -246,6 +246,7 @@ export interface SystemSchemeListItem {
   building_id: string
   building_name: string | null
   subsystem_count: number
+  safety_margin: number
   cooling_capacity_total: number
   heating_capacity_total: number
   cooling_load_peak: number | null

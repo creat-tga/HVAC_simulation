@@ -10,8 +10,7 @@
 import { computed, nextTick, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { useVirtualizer } from '@tanstack/vue-virtual'
+import { ElMessage, ElMessageBox, ElCard } from 'element-plus'
 import { ArrowLeft, Plus, Check, Setting, Delete, ArrowDown, ArrowRight, FolderChecked } from '@element-plus/icons-vue'
 import { randomUUID } from '@/utils/uuid'
 import { getBuilding } from '@/api/buildings'
@@ -23,9 +22,11 @@ import type { Building } from '@/types/building'
 import type {
   ControlStrategy,
   Subsystem,
+  SubsystemDerived,
   SubsystemType,
   StrategyStep,
   SystemSchemeUpdate,
+  ValidationIssue,
 } from '@/types/system-scheme'
 import { ensureControlStrategy } from '@/utils/control-strategy'
 
@@ -44,6 +45,33 @@ const visibleIssues = computed(() => {
   const errors = all.filter((i) => i.severity === 'error')
   return errors.length ? errors : all
 })
+
+const derivedBySubId = computed(() => {
+  const map = new Map<string, SubsystemDerived>()
+  for (const sub of store.derived?.subsystems || []) {
+    map.set(sub.id, sub)
+  }
+  return map
+})
+
+const issuesBySubId = computed(() => {
+  const map = new Map<string, typeof visibleIssues.value>()
+  for (const issue of visibleIssues.value) {
+    if (!issue.subsystem_id) continue
+    const list = map.get(issue.subsystem_id) || []
+    list.push(issue)
+    map.set(issue.subsystem_id, list)
+  }
+  return map
+})
+
+function derivedForSub(sub: Subsystem | undefined) {
+  return sub?.id ? derivedBySubId.value.get(sub.id) || null : null
+}
+
+function issuesForSub(sub: Subsystem | undefined) {
+  return sub?.id ? issuesBySubId.value.get(sub.id) || [] : []
+}
 
 const strategyIssues = computed(() => {
   const all = store.validation?.issues || []
@@ -102,7 +130,6 @@ function revertStep(step: StrategyStep) {
     local.name = s.name
     local.subsystems = JSON.parse(JSON.stringify(s.subsystems || [])) as Subsystem[]
   } else if (step === 'strategy') {
-    local.safety_margin = s.safety_margin
     local.control_strategy = ensureControlStrategy(
       s.control_strategy,
       s.subsystems || [],
@@ -154,12 +181,10 @@ const activeSubIdx = ref(0)
 // Local mutable model bound to store.activeScheme; mark dirty on change
 const local = reactive<{
   name: string
-  safety_margin: number
   control_strategy: ControlStrategy
   subsystems: Subsystem[]
 }>({
   name: '',
-  safety_margin: 1.0,
   control_strategy: ensureControlStrategy({}, [], null, []),
   subsystems: [],
 })
@@ -180,7 +205,6 @@ function syncFromStore() {
   // watcher and call markDirty()).
   suppressDirty = true
   local.name = s.name
-  local.safety_margin = s.safety_margin
   local.subsystems = JSON.parse(JSON.stringify(s.subsystems || [])) as Subsystem[]
   local.control_strategy = ensureControlStrategy(
     s.control_strategy,
@@ -225,7 +249,7 @@ watch(
 )
 
 watch(
-  () => [local.safety_margin, local.control_strategy] as const,
+  () => local.control_strategy,
   () => {
     if (!store.activeScheme) return
     if (suppressDirty || autoSaving) return
@@ -246,7 +270,6 @@ watch(
 const MAX_SUBSYSTEMS = 5
 const addSubDialogVisible = ref(false)
 const newSubType = ref<SubsystemType>('chiller_plant')
-const newSubName = ref('')
 
 const selectMode = ref(false)
 const selectedIdx = ref<Set<number>>(new Set())
@@ -287,67 +310,7 @@ function toggleSubExpanded(sub: Subsystem, idx: number) {
   }
   expandedSubs.value = s
 }
-function expandAllSubs() {
-  const keys = local.subsystems.map((s, i) => subKey(s, i))
-  expandedSubs.value = new Set(keys)
-  // 同步标记为已挂载，下一帧统一挂载重组件，避免阻塞当前点击。
-  requestAnimationFrame(() => {
-    const m = new Set(mountedSubs.value)
-    keys.forEach((k) => m.add(k))
-    mountedSubs.value = m
-  })
-}
-function collapseAllSubs() {
-  expandedSubs.value = new Set()
-}
-
-// ============== Subsystem-level windowed virtualization ==============
-// 共享 .ws-content 滚动容器，仅渲染当前可见的子系统块；折叠/展开切换会
-// 改变项高度，需要 measureElement + watch expandedSubs 重新测量。
-const subStackRef = ref<HTMLElement | null>(null)
-const subScrollParent = ref<HTMLElement | null>(null)
-
-function findSubScrollParent(el: HTMLElement | null): HTMLElement | null {
-  let cur: HTMLElement | null = el
-  while (cur) {
-    if (cur.classList && cur.classList.contains('ws-content')) return cur
-    cur = cur.parentElement
-  }
-  return document.documentElement
-}
-
-const subVirtualizer = useVirtualizer(
-  computed(() => ({
-    count: local.subsystems.length,
-    getScrollElement: () => subScrollParent.value,
-    // 折叠态 ~50px，展开态 600~1500px：用展开比例做加权估算
-    estimateSize: (idx: number) => {
-      const sub = local.subsystems[idx]
-      if (!sub) return 60
-      return isSubExpanded(sub, idx) ? 800 : 60
-    },
-    overscan: 1,
-    measureElement: (el: Element) => el.getBoundingClientRect().height,
-    getItemKey: (idx: number) => local.subsystems[idx]?.id || `sub-${idx}`,
-  })),
-)
-
-onMounted(() => {
-  void nextTick(() => {
-    subScrollParent.value = findSubScrollParent(subStackRef.value)
-  })
-})
-
-// 折叠/展开变化或子系统数量变化都需重新测量
-watch(
-  [() => local.subsystems.length, expandedSubs],
-  () => {
-    void nextTick(() => {
-      subVirtualizer.value.measure()
-    })
-  },
-  { deep: true },
-)
+// 子系统最多 5 个，直接渲染外层块更稳定；重组件仍通过 mountedSubs 延迟挂载。
 
 function toggleSelectMode() {
   selectMode.value = !selectMode.value
@@ -372,7 +335,6 @@ function openAddSub() {
     return
   }
   newSubType.value = 'chiller_plant'
-  newSubName.value = ''
   addSubDialogVisible.value = true
 }
 
@@ -397,7 +359,7 @@ function defaultDesignParams(typ: SubsystemType): Record<string, unknown> {
 
 function confirmAddSub() {
   const idx = local.subsystems.length + 1
-  const name = newSubName.value.trim() || `${t('scheme.types.' + newSubType.value)} ${idx}`
+  const name = `系统${idx}`
   const newId = randomUUID()
   // 默认创建一个组合：冷机 + 冷冻水泵 + 冷却水泵（chiller_plant）/
   // 风冷模块 + 水泵（air_cooled）。结构与 ComboEditor.addCombo 中保持一致，
@@ -490,6 +452,8 @@ async function removeSelected() {
 
 // ----- save -----
 const saving = ref(false)
+const focusedIssue = ref<ValidationIssue | null>(null)
+const focusToken = ref(0)
 
 function buildSelectionPayload(): SystemSchemeUpdate {
   return {
@@ -500,7 +464,6 @@ function buildSelectionPayload(): SystemSchemeUpdate {
 
 function buildStrategyPayload(): SystemSchemeUpdate {
   return {
-    safety_margin: local.safety_margin,
     control_strategy: normalizedControlStrategy.value,
   }
 }
@@ -510,32 +473,67 @@ function buildStrategyPayload(): SystemSchemeUpdate {
  * if only warnings exist, the first warning alert is highlighted instead.
  * Also switches the active subsystem tab so the issue is visible.
  */
-function locateFirstIssue(rep: { issues: Array<{ severity: string; subsystem_id?: string | null }> }) {
+function expandSubForIssue(issue: ValidationIssue) {
+  if (!issue.subsystem_id) return -1
+  const idx = local.subsystems.findIndex((s) => s.id === issue.subsystem_id)
+  if (idx < 0) return -1
+  const key = subKey(local.subsystems[idx], idx)
+  const expanded = new Set(expandedSubs.value)
+  expanded.add(key)
+  expandedSubs.value = expanded
+  const mounted = new Set(mountedSubs.value)
+  mounted.add(key)
+  mountedSubs.value = mounted
+  return idx
+}
+
+function issueSelector(issue: ValidationIssue, hasErrors: boolean): string {
+  const alertClass = hasErrors ? '.el-alert--error' : '.el-alert--warning'
+  if (issue.combo_id) {
+    return `[data-combo-id="${issue.combo_id}"] ${alertClass}, [data-combo-id="${issue.combo_id}"]`
+  }
+  if (issue.subsystem_id) {
+    return `[data-subsystem-id="${issue.subsystem_id}"] ${alertClass}, [data-subsystem-id="${issue.subsystem_id}"] .subsystem-issues, [data-subsystem-id="${issue.subsystem_id}"]`
+  }
+  return alertClass
+}
+
+function locateFirstIssue(rep: { issues: ValidationIssue[] }) {
   if (!rep.issues.length) return
   const errors = rep.issues.filter((i) => i.severity === 'error')
   const first = errors[0] || rep.issues[0]
-  const isStrategyIssue = (first as { field?: string | null }).field?.startsWith('control_strategy')
+  const isStrategyIssue = first.field?.startsWith('control_strategy')
   if (isStrategyIssue) wizardStep.value = 'strategy'
-  if (first.subsystem_id) {
-    const tabIdx = local.subsystems.findIndex((s) => s.id === first.subsystem_id)
-    if (tabIdx >= 0) activeSubIdx.value = tabIdx
+  else wizardStep.value = 'selection'
+  focusedIssue.value = first
+  focusToken.value += 1
+  const subIdx = isStrategyIssue ? -1 : expandSubForIssue(first)
+  if (subIdx >= 0) {
+    activeSubIdx.value = subIdx
+    void nextTick(() => {
+      document.querySelector(`[data-subsystem-index="${subIdx}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
   }
   setTimeout(() => {
     let target: Element | null = null
     if (isStrategyIssue) {
       target = document.querySelector('.strategy-page .el-alert--error')
         || document.querySelector('.strategy-page .el-alert--warning')
-    } else if (errors.length) {
-      // Priority: per-row red highlight > orphan subsystem-level error block
-      // > any error alert anywhere on the page.
-      target = document.querySelector('.combo-block.has-error, .tower-row.has-error')
-        || document.querySelector('.subsystem-issues.has-error')
-        || document.querySelector('.el-alert--error')
     } else {
-      target = document.querySelector('.el-alert--warning')
+      target = document.querySelector(issueSelector(first, !!errors.length))
+    }
+    if (!target) {
+      // Fallback for issues that are not attached to a combo/subsystem-specific alert.
+      if (errors.length) {
+        target = document.querySelector('.combo-block.has-error, .tower-row.has-error')
+          || document.querySelector('.subsystem-issues.has-error')
+          || document.querySelector('.el-alert--error')
+      } else {
+        target = document.querySelector('.el-alert--warning')
+      }
     }
     if (target) (target as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, 200)
+  }, 450)
 }
 
 async function save() {
@@ -753,8 +751,10 @@ const capacityShortMessage = computed(() => {
       </el-badge>
     </div>
 
-    <!-- ============== STEP BODY ============== -->
-    <el-card class="ssd-body" shadow="never">
+    <!-- ============== STEP BODY ==============
+         移动端：直接用 div 容器，不渲染 el-card 外壳；
+         桌面端：使用 el-card 提供视觉分组。 -->
+    <component :is="isMobile ? 'div' : ElCard" class="ssd-body" :shadow="isMobile ? undefined : 'never'">
       <div v-if="visitedSteps.has('selection')" v-show="wizardStep === 'selection'">
         <el-form label-position="top" :inline="false" @submit.prevent>
         <!-- KPI: 冷热负荷 vs 装机容量（紧凑单行展示） -->
@@ -855,57 +855,35 @@ const capacityShortMessage = computed(() => {
           </el-empty>
         </div>
 
-        <!-- Vertical stack of subsystems (virtualized) -->
-        <div
-          v-else
-          ref="subStackRef"
-          class="sub-stack"
-          :style="{ position: 'relative', height: `${subVirtualizer.getTotalSize()}px`, width: '100%' }"
-        >
-          <div
-            v-for="vi in subVirtualizer.getVirtualItems()"
-            :key="String(vi.key)"
-            :ref="(el) => { if (el) subVirtualizer.measureElement(el as HTMLElement) }"
-            :data-index="vi.index"
-            :style="{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              transform: `translateY(${vi.start}px)`,
-            }"
-          >
-            <template v-if="local.subsystems[vi.index]">
+        <!-- Vertical stack of subsystems -->
+        <div v-else class="sub-stack">
+          <template v-for="(sub, subIdx) in local.subsystems" :key="subKey(sub, subIdx)">
             <div
               class="sub-block"
-              :class="{ 'sub-block--selected': selectMode && selectedIdx.has(vi.index), 'sub-block--collapsed': !isSubExpanded(local.subsystems[vi.index], vi.index) }"
+              :class="{ 'sub-block--selected': selectMode && selectedIdx.has(subIdx), 'sub-block--collapsed': !isSubExpanded(sub, subIdx) }"
+              :data-subsystem-id="sub.id || undefined"
+              :data-subsystem-index="subIdx"
             >
             <div class="sub-block-head">
               <div class="sub-block-head-left">
                 <el-checkbox
                   v-if="selectMode"
-                  :model-value="selectedIdx.has(vi.index)"
-                  @change="toggleSelect(vi.index)"
+                  :model-value="selectedIdx.has(subIdx)"
+                  @change="toggleSelect(subIdx)"
                 />
                 <el-button
                   size="small"
                   text
-                  :icon="isSubExpanded(local.subsystems[vi.index], vi.index) ? ArrowDown : ArrowRight"
+                  :icon="isSubExpanded(sub, subIdx) ? ArrowDown : ArrowRight"
                   class="sub-toggle-btn"
-                  @click="toggleSubExpanded(local.subsystems[vi.index], vi.index)"
+                  @click="toggleSubExpanded(sub, subIdx)"
                 />
-                <span class="sub-idx">#{{ vi.index + 1 }}</span>
-                <el-input
-                  v-model="local.subsystems[vi.index].name"
-                  size="small"
-                  class="sub-name-input"
-                  :placeholder="t('scheme.subNamePlaceholder')"
-                />
+                <span class="sub-idx">系统{{ subIdx + 1 }}</span>
                 <el-tag size="small" type="info" effect="plain">
-                  {{ t('scheme.types.' + local.subsystems[vi.index].subsystem_type) }}
+                  {{ t('scheme.types.' + sub.subsystem_type) }}
                 </el-tag>
-                <span v-if="!isSubExpanded(local.subsystems[vi.index], vi.index)" class="sub-collapsed-info">
-                  <template v-for="d in [store.derived?.subsystems?.find(x => x.id === local.subsystems[vi.index].id)]" :key="d?.id || vi.index">
+                <span v-if="!isSubExpanded(sub, subIdx)" class="sub-collapsed-info">
+                  <template v-for="d in [derivedForSub(sub)]" :key="d?.id || subIdx">
                     <template v-if="d?.cooling_capacity_total">
                       · 制冷量 {{ d.cooling_capacity_total }} kW
                     </template>
@@ -922,7 +900,7 @@ const capacityShortMessage = computed(() => {
                   text
                   :icon="Delete"
                   :disabled="local.subsystems.length <= 1"
-                  @click="removeSub(vi.index)"
+                  @click="removeSub(subIdx)"
                 >
                   {{ t('common.delete') }}
                 </el-button>
@@ -930,24 +908,25 @@ const capacityShortMessage = computed(() => {
             </div>
 
             <SubsystemEditor
-              v-if="isSubMounted(local.subsystems[vi.index], vi.index)"
-              v-show="isSubExpanded(local.subsystems[vi.index], vi.index)"
-              v-model="local.subsystems[vi.index]"
-              :derived="store.derived?.subsystems.find((d) => d.id === local.subsystems[vi.index].id) || null"
-              :issues="visibleIssues.filter((iss) => iss.subsystem_id === local.subsystems[vi.index].id)"
+              v-if="isSubMounted(sub, subIdx)"
+              v-show="isSubExpanded(sub, subIdx)"
+              v-model="local.subsystems[subIdx]"
+              :derived="derivedForSub(sub)"
+              :issues="issuesForSub(sub)"
+              :focus-combo-id="focusedIssue?.subsystem_id === sub.id ? focusedIssue?.combo_id || null : null"
+              :focus-token="focusToken"
             />
             <!-- 首次展开的过渡骨架：mountedSubs 翻 true 之前先展示，
                  让用户立即看到反馈，避免 1+ s 的"按了没反应"错觉。 -->
             <div
-              v-else-if="isSubExpanded(local.subsystems[vi.index], vi.index)"
+              v-else-if="isSubExpanded(sub, subIdx)"
               class="sub-skeleton"
             >
               <el-skeleton :rows="3" animated />
               <el-skeleton :rows="6" animated style="margin-top: 12px" />
             </div>
             </div>
-            </template>
-          </div>
+          </template>
         </div>
 
         <!-- 校验报告改为就地高亮，无需此处单独表格 -->
@@ -957,14 +936,12 @@ const capacityShortMessage = computed(() => {
       <div v-if="visitedSteps.has('strategy')" v-show="wizardStep === 'strategy'">
         <ControlStrategyEditor
           :model-value="normalizedControlStrategy"
-          :safety-margin="local.safety_margin"
           :subsystems="local.subsystems"
           :derived="store.derived?.subsystems || null"
           :summary="store.summary"
           :zones="building?.zones || []"
           :issues="strategyIssues"
           @update:model-value="(value) => { local.control_strategy = value }"
-          @update:safety-margin="(value) => { local.safety_margin = value }"
         />
       </div>
 
@@ -973,7 +950,7 @@ const capacityShortMessage = computed(() => {
           <el-button disabled>{{ t('scheme.steps.tba') }}</el-button>
         </el-empty>
       </div>
-    </el-card>
+    </component>
 
     <!-- Add Subsystem dialog -->
     <el-dialog v-model="addSubDialogVisible" :title="t('scheme.addSubsystem')" width="420px">
@@ -984,9 +961,6 @@ const capacityShortMessage = computed(() => {
             <el-radio-button label="air_cooled">{{ t('scheme.types.air_cooled') }}</el-radio-button>
             <el-radio-button label="shared_tower">{{ t('scheme.types.shared_tower') }}</el-radio-button>
           </el-radio-group>
-        </el-form-item>
-        <el-form-item :label="t('scheme.subName')">
-          <el-input v-model="newSubName" :placeholder="t('scheme.subNamePlaceholder')" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -1154,6 +1128,22 @@ const capacityShortMessage = computed(() => {
 }
 .ssd-body :deep(.el-form-item) {
   margin-bottom: 14px;
+}
+
+/* Keep shared scheme field layout from being overridden by the legacy body rules above. */
+.ssd-body :deep(.scheme-field-grid .el-form-item) {
+  margin: 0 0 6px 0 !important;
+}
+.ssd-body :deep(.scheme-field-grid .el-form-item__label) {
+  height: var(--scheme-control-height);
+  min-height: var(--scheme-control-height);
+  padding: 0 !important;
+  font-size: var(--scheme-label-font-size);
+  font-weight: var(--font-weight-regular);
+  line-height: 1.25;
+}
+.ssd-body :deep(.scheme-field-grid .el-input-number) {
+  width: var(--scheme-control-width) !important;
 }
 
 /* KPI inside selection step (compact single row) */

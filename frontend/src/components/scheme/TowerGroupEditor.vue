@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, Delete, Setting } from '@element-plus/icons-vue'
+import { Plus, Delete } from '@element-plus/icons-vue'
 import EquipmentPicker from './EquipmentPicker.vue'
+import NumberInput from './NumberInput.vue'
 import { randomUUID } from '@/utils/uuid'
 import type { EquipmentBrief, SubsystemDerived, SchemeTowerGroup, ValidationIssue } from '@/types/system-scheme'
 
@@ -60,16 +61,21 @@ const requiredFlow = computed(() => {
 const supplyFlow = computed(() => props.derived?.tower_flow_total ?? 0)
 
 const factorDialogVisible = ref(false)
+const factorDialogIndex = ref<number | null>(null)
 const factorDraft = ref(0.85)
 
-function openFactorDialog() {
-  factorDraft.value = groups.value[0]?.factor ?? 0.85
+function openFactorDialog(idx: number) {
+  factorDialogIndex.value = idx
+  factorDraft.value = groups.value[idx]?.factor ?? 0.85
   factorDialogVisible.value = true
 }
 
 function applyFactor() {
-  groups.value = groups.value.map((g) => ({ ...g, factor: factorDraft.value }))
+  const idx = factorDialogIndex.value
+  if (idx === null) return
+  groups.value = groups.value.map((g, i) => (i === idx ? { ...g, factor: factorDraft.value } : g))
   factorDialogVisible.value = false
+  factorDialogIndex.value = null
 }
 
 function towerIssues(idx: number): ValidationIssue[] {
@@ -108,12 +114,9 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
   <el-card shadow="never" class="tower-card">
     <template #header>
       <div class="tower-head">
-        <span>{{ t('scheme.tower.title') }}</span>
+        <span class="tower-title">{{ t('scheme.tower.title') }}</span>
         <div class="tower-head-actions">
-          <el-button text size="small" :icon="Setting" @click="openFactorDialog">
-            {{ t('scheme.combo.factorDialogBtn') }}
-          </el-button>
-          <el-button plain :icon="Plus" size="small" @click="add" :disabled="groups.length >= 10">
+          <el-button type="primary" :icon="Plus" size="small" @click="add" :disabled="groups.length >= 10">
             {{ t('scheme.tower.add') }}
           </el-button>
         </div>
@@ -121,7 +124,15 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
     </template>
 
     <div v-for="(g, idx) in groups" :key="idx" class="tower-row" :class="{ 'has-error': towerIssues(idx).some((i) => i.severity === 'error') }">
-      <strong>{{ t('scheme.tower.group') }} #{{ g.group_index }}</strong>
+      <div class="tower-block-head">
+        <strong>{{ t('scheme.tower.group') }} #{{ g.group_index }}</strong>
+        <div class="tower-head-actions">
+          <el-button size="small" text @click="openFactorDialog(idx)">
+            {{ t('scheme.combo.factorDialogBtn') }}
+          </el-button>
+          <el-button type="danger" :icon="Delete" size="small" text @click="remove(idx)" :disabled="groups.length <= 1" />
+        </div>
+      </div>
       <el-alert
         v-for="(iss, i) in towerIssues(idx)"
         :key="`tiss-${idx}-${i}`"
@@ -131,7 +142,7 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
         :closable="false"
         class="tower-issue"
       />
-      <el-row :gutter="10" align="middle">
+      <el-row :gutter="8" align="middle" class="tower-edit-row scheme-field-grid">
         <el-col :span="10"><el-form-item :label="t('scheme.tower.model')">
           <EquipmentPicker
             :model-value="g.tower_model_id ?? null"
@@ -141,52 +152,34 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
           />
         </el-form-item></el-col>
         <el-col :span="4"><el-form-item :label="t('scheme.tower.count')">
-          <el-input-number value-on-clear="min" v-model="g.count" :min="1" :max="20" size="small" /></el-form-item></el-col>
-        <el-col :span="2">
-          <el-button type="danger" :icon="Delete" text @click="remove(idx)" :disabled="groups.length <= 1" />
-        </el-col>
+          <NumberInput v-model="g.count" :min="1" :max="20" /></el-form-item></el-col>
       </el-row>
 
       <!-- 冷却塔参数表 -->
-      <el-descriptions
+      <div
         v-if="derived?.tower_groups?.[idx] && g.tower_model_id"
-        :column="2"
-        size="small"
-        border
         class="device-table device-table--warm"
       >
-        <el-descriptions-item :label="t('scheme.derived.flowLabel')">
-          {{ unitVal(derived.tower_groups[idx].flow, derived.tower_groups[idx].count) }} × {{ derived.tower_groups[idx].count }} = {{ derived.tower_groups[idx].flow }} m³/h
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('scheme.derived.headLabel')">
-          {{ derived.tower_groups[idx].head }} mH₂O
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('scheme.derived.powerLabel')">
-          {{ unitVal(derived.tower_groups[idx].power, derived.tower_groups[idx].count) }} × {{ derived.tower_groups[idx].count }} = {{ derived.tower_groups[idx].power }} kW
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('scheme.tower.inletTemp')">
-          {{ derived.tower_groups[idx].inlet_temp }} ℃
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('scheme.tower.outletTemp')">
-          {{ derived.tower_groups[idx].outlet_temp }} ℃
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('scheme.tower.wetBulb')">
-          {{ derived.tower_groups[idx].wet_bulb }} ℃
-        </el-descriptions-item>
-      </el-descriptions>
+        <div class="device-cell"><span>{{ t('scheme.derived.flowLabel') }}</span><strong>{{ unitVal(derived.tower_groups[idx].flow, derived.tower_groups[idx].count) }} × {{ derived.tower_groups[idx].count }} = {{ derived.tower_groups[idx].flow }} m³/h</strong></div>
+        <div class="device-cell"><span>{{ t('scheme.derived.headLabel') }}</span><strong>{{ derived.tower_groups[idx].head }} mH₂O</strong></div>
+        <div class="device-cell"><span>{{ t('scheme.derived.powerLabel') }}</span><strong>{{ unitVal(derived.tower_groups[idx].power, derived.tower_groups[idx].count) }} × {{ derived.tower_groups[idx].count }} = {{ derived.tower_groups[idx].power }} kW</strong></div>
+        <div class="device-cell"><span>{{ t('scheme.tower.inletTemp') }}</span><strong>{{ derived.tower_groups[idx].inlet_temp }} ℃</strong></div>
+        <div class="device-cell"><span>{{ t('scheme.tower.outletTemp') }}</span><strong>{{ derived.tower_groups[idx].outlet_temp }} ℃</strong></div>
+        <div class="device-cell"><span>{{ t('scheme.tower.wetBulb') }}</span><strong>{{ derived.tower_groups[idx].wet_bulb }} ℃</strong></div>
+      </div>
     </div>
 
     <div v-if="derived" class="tower-summary">
-      <el-descriptions :column="2" size="small" border>
-        <el-descriptions-item :label="t('scheme.tower.flowRequired')">
-          {{ requiredFlow.toFixed(1) }} m³/h
-        </el-descriptions-item>
-        <el-descriptions-item :label="t('scheme.tower.flowSupply')">
-          <span :style="{ color: Math.abs(supplyFlow - requiredFlow) / Math.max(requiredFlow, 1) > 0.1 ? 'var(--color-danger)' : 'var(--color-success)' }">
-            {{ supplyFlow.toFixed(1) }} m³/h
-          </span>
-        </el-descriptions-item>
-      </el-descriptions>
+      <div class="tower-summary-item">
+        <span>{{ t('scheme.tower.flowRequired') }}</span>
+        <strong>{{ requiredFlow.toFixed(1) }} m³/h</strong>
+      </div>
+      <div class="tower-summary-item">
+        <span>{{ t('scheme.tower.flowSupply') }}</span>
+        <strong :style="{ color: Math.abs(supplyFlow - requiredFlow) / Math.max(requiredFlow, 1) > 0.1 ? 'var(--color-danger)' : 'var(--color-success)' }">
+          {{ supplyFlow.toFixed(1) }} m³/h
+        </strong>
+      </div>
     </div>
 
     <el-dialog
@@ -197,19 +190,12 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
     >
       <el-form label-width="140px" size="small">
         <el-form-item :label="t('scheme.tower.factorLabel')">
-          <el-input-number
-            v-model="factorDraft"
-            value-on-clear="min"
-            :min="0.10"
-            :max="1.00"
-            :step="0.01"
-            :precision="2"
-          />
+          <NumberInput v-model="factorDraft" :min="0.10" :max="1.00" :step="0.01" :precision="2" />
         </el-form-item>
       </el-form>
       <div class="tower-factor-tip">{{ t('scheme.tower.factorTip') }}</div>
       <template #footer>
-        <el-button @click="factorDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button @click="factorDialogVisible = false; factorDialogIndex = null">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" @click="applyFactor">{{ t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
@@ -218,13 +204,57 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
 </template>
 
 <style scoped>
-.tower-card { border-radius: var(--radius-lg); }
+.tower-card { border-radius: 8px; }
+.tower-card :deep(.el-card__header) { padding: 8px 10px; }
+.tower-card :deep(.el-card__body) { padding: 8px 10px 10px; }
 .tower-head { display: flex; justify-content: space-between; align-items: center; }
 .tower-head-actions { display: flex; align-items: center; gap: 6px; }
-.tower-row { padding: 8px 0; }
-.tower-row :deep(.el-input-number) { width: 100%; }
-.tower-row :deep(.el-input) { width: 100%; }
-.tower-summary { margin-top: 8px; }
+.tower-title { font-weight: 600; font-size: 14px; color: var(--text-primary); }
+.tower-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.tower-row:last-of-type { border-bottom: 0; }
+.tower-block-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.tower-block-head strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.tower-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.tower-summary-item {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  min-height: 28px;
+}
+.tower-summary-item + .tower-summary-item { border-left: 1px solid var(--border-subtle); }
+.tower-summary-item span,
+.tower-summary-item strong {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.tower-summary-item span {
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.tower-summary-item strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
 .tower-factor-tip { color: var(--text-muted); font-size: var(--font-size-xs); margin-top: -4px; }
 .eq-detail {
   margin-top: 4px;
@@ -244,9 +274,73 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
 }
 .eq-detail--warm span { color: #c2410c; }
 .tower-row.has-error { background: var(--color-danger-soft); border-radius: var(--radius-md); padding: 6px 8px; }
-.tower-issue { margin: 8px 0; }
-.device-table { margin: 4px 0 12px 0; }
-.device-table :deep(.el-descriptions__label) { width: 110px; }
-.device-table--warm :deep(.el-descriptions__label) { background: #fff7ed; color: #c2410c; }
-.device-table--warm :deep(.el-descriptions__content) { color: #c2410c; }
+.tower-issue { margin: 6px 0; }
+.device-table {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 2px 0 8px 0;
+}
+.device-cell {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  min-height: 28px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.device-cell:nth-last-child(-n + 2) { border-bottom: 0; }
+.device-cell span {
+  padding: 6px 8px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 12px;
+  font-weight: 500;
+}
+.device-cell strong {
+  padding: 6px 8px;
+  color: #c2410c;
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .tower-card :deep(.el-card__body) { padding: 8px; }
+  .tower-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .tower-head-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .tower-block-head {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .tower-block-head .tower-head-actions {
+    width: auto;
+    flex: 0 0 auto;
+    gap: 4px;
+  }
+  .device-table,
+  .tower-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .device-cell,
+  .device-cell:nth-last-child(-n + 2),
+  .tower-summary-item {
+    grid-template-columns: 92px minmax(0, 1fr);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .device-cell:last-child,
+  .tower-summary-item:last-child {
+    border-bottom: 0;
+  }
+  .tower-summary-item + .tower-summary-item { border-left: 0; }
+}
+
 </style>

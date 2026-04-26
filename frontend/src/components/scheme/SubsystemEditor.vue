@@ -21,6 +21,8 @@ const props = defineProps<{
   modelValue: Subsystem
   derived: SubsystemDerived | null
   issues?: ValidationIssue[]
+  focusComboId?: string | null
+  focusToken?: number
 }>()
 const emit = defineEmits<{ 'update:modelValue': [v: Subsystem] }>()
 
@@ -103,6 +105,8 @@ onMounted(() => {
       :pipe-system="pipeSystem"
       :derived="derived?.combos"
       :issues="issues || []"
+      :focus-combo-id="focusComboId"
+      :focus-token="focusToken"
       @update:model-value="(v) => update('combos', v)"
     />
 
@@ -127,15 +131,22 @@ onMounted(() => {
   display: block;
 }
 .mt {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 .subsystem-issues {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 4px;
+  margin-bottom: 8px;
 }
 .sub-issue-alert {
-  padding: 6px 10px;
+  padding: 5px 8px;
+}
+
+@media (max-width: 640px) {
+  .mt { margin-top: 8px; }
+  .sub-issue-alert {
+    padding: 5px 7px;
+  }
 }
 </style>

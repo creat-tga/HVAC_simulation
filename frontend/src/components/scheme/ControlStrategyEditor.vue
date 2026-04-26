@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
-import { RefreshRight, Plus, Delete } from '@element-plus/icons-vue'
+import { RefreshRight, Plus, Delete, FullScreen, Close } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import ScheduleEditor from '@/components/building/ScheduleEditor.vue'
 import StrategyValueProfileEditor from './StrategyValueProfileEditor.vue'
@@ -9,8 +9,10 @@ import { randomUUID } from '@/utils/uuid'
 import type { BuildingZone } from '@/types/building'
 import type {
   AirCooledStage,
+  AirCooledStrategy,
   CapacitySummary,
   ChillerStage,
+  ChillerPlantStrategy,
   ControlStrategy,
   StrategyGroupStat,
   StrategyZoneSummary,
@@ -30,7 +32,6 @@ import {
 
 const props = defineProps<{
   modelValue: ControlStrategy
-  safetyMargin: number
   subsystems: Subsystem[]
   derived: SubsystemDerived[] | null
   summary: CapacitySummary | null
@@ -40,10 +41,32 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: ControlStrategy): void
-  (e: 'update:safetyMargin', value: number): void
 }>()
 
 const { t } = useI18n()
+const fullscreenStageSubId = ref<string | null>(null)
+const fullscreenStageSub = computed(() =>
+  props.subsystems.find((sub) => sub.id === fullscreenStageSubId.value) || null,
+)
+const fullscreenStageSubSafe = computed<Subsystem>(() => fullscreenStageSub.value || ({} as Subsystem))
+
+function isStageFullscreen(subId?: string): boolean {
+  return Boolean(subId && fullscreenStageSubId.value === subId)
+}
+
+function enterStageFullscreen(subId?: string) {
+  if (!subId) return
+  fullscreenStageSubId.value = subId
+}
+
+function exitStageFullscreen() {
+  fullscreenStageSubId.value = null
+}
+
+function toggleStageFullscreen(subId?: string) {
+  if (isStageFullscreen(subId)) exitStageFullscreen()
+  else enterStageFullscreen(subId)
+}
 
 const zoneSummaries = computed<StrategyZoneSummary[]>(() =>
   estimateZones(props.zones, props.summary?.cooling_load_peak, props.summary?.heating_load_peak),
@@ -213,10 +236,6 @@ function updateStrategy(mutator: (next: ControlStrategy) => void) {
   const next = cloneJson(props.modelValue)
   mutator(next)
   emitStrategy(next)
-}
-
-function updateSafetyMargin(value: number | null | undefined) {
-  emit('update:safetyMargin', Number(value || 0))
 }
 
 function assignedSubsystemIds(groupId: string) {
@@ -485,6 +504,21 @@ function subInfo(subId: string) {
   return props.subsystems.find((sub) => sub.id === subId)
 }
 
+function subDisplayName(subId: string): string {
+  const idx = props.subsystems.findIndex((sub) => sub.id === subId)
+  return idx >= 0 ? `系统${idx + 1}` : subId.slice(0, 8)
+}
+
+function subTypeLabel(subId: string): string {
+  const sub = subInfo(subId)
+  return sub ? t('scheme.types.' + sub.subsystem_type) : ''
+}
+
+function subTitle(subId: string): string {
+  const type = subTypeLabel(subId)
+  return type ? `${subDisplayName(subId)} · ${type}` : subDisplayName(subId)
+}
+
 // ---- Pickers (zone/subsystem) with search + multi-select ----
 const pickerSearch = reactive<Record<string, string>>({})
 const pickerSelected = reactive<Record<string, string[]>>({})
@@ -564,6 +598,21 @@ function getSubsystemStrategy(sub: Subsystem): SubsystemControlStrategy | null {
   if (!sub.id) return null
   return props.modelValue.system_strategies[sub.id] || null
 }
+
+function getChillerPlantStrategy(sub: Subsystem): ChillerPlantStrategy | null {
+  const strategy = getSubsystemStrategy(sub)
+  return strategy?.subsystem_type === 'chiller_plant' ? strategy : null
+}
+
+function getAirCooledStrategy(sub: Subsystem): AirCooledStrategy | null {
+  const strategy = getSubsystemStrategy(sub)
+  return strategy?.subsystem_type === 'air_cooled' ? strategy : null
+}
+
+const fullscreenChillerStrategy = computed(() => getChillerPlantStrategy(fullscreenStageSubSafe.value))
+const fullscreenAirCooledStrategy = computed(() => getAirCooledStrategy(fullscreenStageSubSafe.value))
+const fullscreenChillerStages = computed(() => fullscreenChillerStrategy.value?.equipment.chiller_stages || [])
+const fullscreenModuleStages = computed(() => fullscreenAirCooledStrategy.value?.equipment.module_stages || [])
 
 function updateSubsystemStrategy(sub: Subsystem, mutator: (next: SubsystemControlStrategy) => void) {
   if (!sub.id) return
@@ -783,21 +832,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
       class="strategy-alert"
     />
 
-    <div class="safety-margin-bar">
-      <span class="safety-margin-label">{{ t('scheme.strategy.safetyMargin') }}</span>
-      <el-input-number
-        :model-value="safetyMargin"
-        :min="0"
-        :max="1.2"
-        :step="0.01"
-        :precision="2"
-        size="small"
-        style="width: 130px;"
-        @update:model-value="(val) => updateSafetyMargin(Number(val || 0))"
-      />
-    </div>
-
-    <el-card class="strategy-card" shadow="never">
+    <el-card class="strategy-card strategy-card--load" shadow="never">
       <template #header>
         <div class="card-head">
           <div class="card-title">{{ t('scheme.strategy.tabLoadDist') }}</div>
@@ -865,15 +900,8 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 
           <!-- 负荷分区 tag -->
           <div class="ld-col ld-col--zones">
-            <div class="ld-tag-wrap">
-              <el-tag
-                v-for="key in assignedZoneKeys(group.id)"
-                :key="key"
-                type="info"
-                effect="plain"
-                class="ld-tag ld-tag--fixed"
-                :title="zoneInfo(key)?.name || key"
-              >{{ zoneInfo(key)?.name || key }}</el-tag>
+            <div class="ld-col-toolbar">
+              <span class="ld-mobile-col-title">{{ t('scheme.strategy.colZones') }}</span>
               <el-popover
                 v-if="unassignedZoneOptions(group.id).length"
                 placement="bottom-start"
@@ -919,21 +947,24 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                   </div>
                 </div>
               </el-popover>
+            </div>
+            <div class="ld-tag-wrap">
+              <el-tag
+                v-for="key in assignedZoneKeys(group.id)"
+                :key="key"
+                type="info"
+                effect="plain"
+                class="ld-tag ld-tag--fixed"
+                :title="zoneInfo(key)?.name || key"
+              >{{ zoneInfo(key)?.name || key }}</el-tag>
               <span v-if="!assignedZoneKeys(group.id).length && !unassignedZoneOptions(group.id).length" class="ld-empty">{{ t('scheme.strategy.noZones') }}</span>
             </div>
           </div>
 
           <!-- 系统 tag（竖向堆叠） -->
           <div class="ld-col ld-col--subs">
-            <div class="ld-tag-wrap ld-tag-wrap--vertical">
-              <el-tag
-                v-for="sid in assignedSubsystemIds(group.id)"
-                :key="sid"
-                type="primary"
-                effect="plain"
-                class="ld-tag ld-tag--block"
-                :title="subInfo(sid)?.name || sid"
-              >{{ subInfo(sid)?.name || sid.slice(0, 8) }}</el-tag>
+            <div class="ld-col-toolbar">
+              <span class="ld-mobile-col-title">{{ t('scheme.strategy.colSubsystems') }}</span>
               <el-popover
                 v-if="unassignedSubsystemOptions(group.id).length"
                 placement="bottom-start"
@@ -962,7 +993,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                         :value="sub.id"
                         class="ld-picker-item"
                       >
-                        <span class="ld-picker-name">{{ sub.name }}</span>
+                        <span class="ld-picker-name">{{ subDisplayName(sub.id || '') }}</span>
                         <span class="ld-meta">{{ t('scheme.types.' + sub.subsystem_type) }}</span>
                       </el-checkbox>
                       <div v-if="!filteredSubsystemOptions(group.id).length" class="ld-picker-empty">{{ t('scheme.strategy.noMatch') }}</div>
@@ -979,6 +1010,19 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                   </div>
                 </div>
               </el-popover>
+            </div>
+            <div class="ld-tag-wrap ld-tag-wrap--vertical">
+              <el-tag
+                v-for="sid in assignedSubsystemIds(group.id)"
+                :key="sid"
+                type="primary"
+                effect="plain"
+                class="ld-tag ld-tag--block"
+                :title="subTitle(sid)"
+              >
+                <span class="ld-sub-name">{{ subDisplayName(sid) }}</span>
+                <span class="ld-sub-type">{{ subTypeLabel(sid) }}</span>
+              </el-tag>
               <span v-if="!assignedSubsystemIds(group.id).length && !unassignedSubsystemOptions(group.id).length" class="ld-empty">{{ t('scheme.strategy.noSubsystems') }}</span>
             </div>
           </div>
@@ -999,7 +1043,10 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
               class="ld-mode-body"
             >
               <div v-for="sid in assignedSubsystemIds(group.id)" :key="sid" class="ld-ratio-row">
-                <span class="ld-ratio-name" :title="subInfo(sid)?.name || sid">{{ subInfo(sid)?.name || sid.slice(0, 8) }}</span>
+                <span class="ld-ratio-name" :title="subTitle(sid)">
+                  <span>{{ subDisplayName(sid) }}</span>
+                  <span class="ld-sub-type">{{ subTypeLabel(sid) }}</span>
+                </span>
                 <el-input-number
                   :model-value="modelValue.load_distribution.group_settings[group.id]?.ratios?.[sid] || 0"
                   :min="0"
@@ -1036,10 +1083,11 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                 <template #item="{ element: sid, index: idx }">
                   <div
                     class="ld-priority-tag"
-                    :title="subInfo(sid)?.name || sid"
+                    :title="subTitle(sid)"
                   >
                     <span class="ld-priority-idx">{{ idx + 1 }}</span>
-                    <span class="ld-priority-name">{{ subInfo(sid)?.name || sid.slice(0, 8) }}</span>
+                    <span class="ld-priority-name">{{ subDisplayName(sid) }}</span>
+                    <span class="ld-sub-type">{{ subTypeLabel(sid) }}</span>
                   </div>
                 </template>
               </draggable>
@@ -1055,10 +1103,10 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
       </template>
 
       <el-collapse v-model="activeStrategySubs" @change="onStrategyCollapseChange">
-        <el-collapse-item v-for="sub in subsystems" :key="sub.id || sub.subsystem_index" :name="sub.id || sub.subsystem_index">
+        <el-collapse-item v-for="(sub, subIdx) in subsystems" :key="sub.id || sub.subsystem_index" :name="sub.id || sub.subsystem_index">
           <template #title>
             <div class="sub-title-row">
-              <span>{{ sub.name }}</span>
+              <span>系统{{ subIdx + 1 }}</span>
               <el-tag size="small" type="info" effect="plain">{{ t('scheme.types.' + sub.subsystem_type) }}</el-tag>
               <el-button
                 size="small"
@@ -1200,7 +1248,16 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 
               <!-- Stage table (chiller_plant) -->
               <div class="equip-block" v-if="getSubsystemStrategy(sub)?.subsystem_type === 'chiller_plant'">
-                <div class="equip-block-title">加减机策略表</div>
+                <div class="equip-block-head">
+                  <div class="equip-block-title">加减机策略表</div>
+                  <el-button
+                    class="stage-fullscreen-btn"
+                    size="small"
+                    text
+                    :icon="isStageFullscreen(sub.id) ? Close : FullScreen"
+                    @click="toggleStageFullscreen(sub.id)"
+                  />
+                </div>
                 <el-alert
                   v-for="(issue, idx) in subsystemStageIssues(sub.id)"
                   :key="`${sub.id}-stage-${idx}`"
@@ -1272,7 +1329,16 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 
               <!-- Stage table (air_cooled) -->
               <div class="equip-block" v-else-if="getSubsystemStrategy(sub)?.subsystem_type === 'air_cooled'">
-                <div class="equip-block-title">加减机策略表</div>
+                <div class="equip-block-head">
+                  <div class="equip-block-title">加减机策略表</div>
+                  <el-button
+                    class="stage-fullscreen-btn"
+                    size="small"
+                    text
+                    :icon="isStageFullscreen(sub.id) ? Close : FullScreen"
+                    @click="toggleStageFullscreen(sub.id)"
+                  />
+                </div>
                 <el-alert
                   v-for="(issue, idx) in subsystemStageIssues(sub.id)"
                   :key="`${sub.id}-stage-ac-${idx}`"
@@ -1435,6 +1501,138 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
         </el-collapse-item>
       </el-collapse>
     </el-card>
+
+    <Teleport to="body">
+      <div v-if="fullscreenStageSub" class="stage-fullscreen-overlay">
+        <div class="stage-fullscreen-shell">
+          <div class="stage-fullscreen-head">
+            <div class="equip-block-title">加减机策略表</div>
+            <el-button size="small" text :icon="Close" @click="exitStageFullscreen" />
+          </div>
+
+          <div v-if="fullscreenChillerStrategy" class="stage-table stage-table--fullscreen">
+            <table class="st-table">
+              <thead>
+                <tr>
+                  <th class="st-stage-col">档位</th>
+                  <th v-for="combo in fullscreenStageSubSafe.combos" :key="combo.id || combo.combo_index" class="st-combo-col">
+                    <div class="st-combo-head">
+                      <div class="st-combo-name">{{ comboModelName(fullscreenStageSubSafe.id, combo.id) || t('scheme.strategy.comboTitle', { n: combo.combo_index }) }}</div>
+                      <div class="st-combo-sub">{{ comboCapacitySub(fullscreenStageSubSafe.id, combo.id) }}</div>
+                    </div>
+                  </th>
+                  <th class="st-num-col">{{ t('scheme.strategy.loadingDown') }}</th>
+                  <th class="st-num-col">{{ t('scheme.strategy.loadingUp') }}</th>
+                  <th class="st-cap-col">{{ t('scheme.strategy.capacitySegment') }}</th>
+                  <th class="st-act-col"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(stage, stageIdx) in fullscreenChillerStages" :key="stage.id">
+                  <td class="st-stage-col">{{ stageIdx + 1 }}</td>
+                  <td v-for="combo in fullscreenStageSubSafe.combos" :key="combo.id || combo.combo_index" :class="{ 'is-zero': !(combo.id && stage.combo_counts[combo.id]) }">
+                    <el-input-number
+                      :model-value="combo.id ? stage.combo_counts[combo.id] || 0 : 0"
+                      :min="0"
+                      :max="combo.primary_count"
+                      :step="1"
+                      size="small"
+                      controls-position="right"
+                      @update:model-value="(val) => combo.id && updateStageCount(fullscreenStageSubSafe, stageIdx, combo.id, Number(val || 0))"
+                    />
+                  </td>
+                  <td>
+                    <el-input-number
+                      :model-value="stage.loading_down || undefined"
+                      :min="30" :max="100" size="small" controls-position="right"
+                      :disabled="stageIdx === 0"
+                      @update:model-value="(val) => updateStageField(fullscreenStageSubSafe, stageIdx, 'loading_down', Number(val || 0))"
+                    />
+                  </td>
+                  <td>
+                    <el-input-number
+                      :model-value="stage.loading_up || undefined"
+                      :min="30" :max="100" size="small" controls-position="right"
+                      :disabled="stageIdx === (fullscreenChillerStages.length || 1) - 1"
+                      @update:model-value="(val) => updateStageField(fullscreenStageSubSafe, stageIdx, 'loading_up', Number(val || 0))"
+                    />
+                  </td>
+                  <td class="st-cap-col">{{ stage.cooling_capacity_min ?? '-' }} ~ {{ stage.cooling_capacity_max ?? '-' }}</td>
+                  <td class="st-act-col">
+                    <el-button text :icon="Plus" @click="insertStageAt(fullscreenStageSubSafe, stageIdx)" :title="'在此行下方插入新档位'" />
+                    <el-button text type="danger" :icon="Delete"
+                      :disabled="fullscreenChillerStages.length <= 1"
+                      @click="removeStage(fullscreenStageSubSafe, stageIdx)" />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div v-else-if="fullscreenAirCooledStrategy" class="stage-table stage-table--fullscreen">
+            <table class="st-table">
+              <thead>
+                <tr>
+                  <th class="st-stage-col">档位</th>
+                  <th v-for="combo in fullscreenStageSubSafe.combos" :key="combo.id || combo.combo_index" class="st-combo-col">
+                    <div class="st-combo-head">
+                      <div class="st-combo-name">{{ t('scheme.strategy.comboTitle', { n: combo.combo_index }) }}</div>
+                      <div class="st-combo-sub">{{ derivedComboLabel(fullscreenStageSubSafe.id, combo.id) }}</div>
+                    </div>
+                  </th>
+                  <th class="st-num-col">{{ t('scheme.strategy.loadingDown') }}</th>
+                  <th class="st-num-col">{{ t('scheme.strategy.loadingUp') }}</th>
+                  <th class="st-cap-col">{{ t('scheme.strategy.capSegmentCool') }} / {{ t('scheme.strategy.capSegmentHeat') }}</th>
+                  <th class="st-act-col"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(stage, stageIdx) in fullscreenModuleStages" :key="stage.id">
+                  <td class="st-stage-col">{{ stageIdx + 1 }}</td>
+                  <td v-for="combo in fullscreenStageSubSafe.combos" :key="combo.id || combo.combo_index" :class="{ 'is-zero': !(combo.id && stage.combo_counts[combo.id]) }">
+                    <el-input-number
+                      :model-value="combo.id ? stage.combo_counts[combo.id] || 0 : 0"
+                      :min="0"
+                      :max="combo.group_count"
+                      :step="1"
+                      size="small"
+                      controls-position="right"
+                      @update:model-value="(val) => combo.id && updateStageCount(fullscreenStageSubSafe, stageIdx, combo.id, Number(val || 0))"
+                    />
+                  </td>
+                  <td>
+                    <el-input-number
+                      :model-value="stage.loading_down || undefined"
+                      :min="0" :max="100" size="small" controls-position="right"
+                      :disabled="stageIdx === 0"
+                      @update:model-value="(val) => updateStageField(fullscreenStageSubSafe, stageIdx, 'loading_down', Number(val || 0))"
+                    />
+                  </td>
+                  <td>
+                    <el-input-number
+                      :model-value="stage.loading_up || undefined"
+                      :min="0" :max="100" size="small" controls-position="right"
+                      :disabled="stageIdx === (fullscreenModuleStages.length || 1) - 1"
+                      @update:model-value="(val) => updateStageField(fullscreenStageSubSafe, stageIdx, 'loading_up', Number(val || 0))"
+                    />
+                  </td>
+                  <td class="st-cap-col">
+                    <div>{{ stage.cooling_capacity_min ?? '-' }} ~ {{ stage.cooling_capacity_max ?? '-' }}</div>
+                    <div class="st-cap-heat">{{ stage.heating_capacity_min ?? '-' }} ~ {{ stage.heating_capacity_max ?? '-' }}</div>
+                  </td>
+                  <td class="st-act-col">
+                    <el-button text :icon="Plus" @click="insertStageAt(fullscreenStageSubSafe, stageIdx)" :title="'在此行下方插入新档位'" />
+                    <el-button text type="danger" :icon="Delete"
+                      :disabled="fullscreenModuleStages.length <= 1"
+                      @click="removeStage(fullscreenStageSubSafe, stageIdx)" />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -1442,11 +1640,26 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 .strategy-page {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 .strategy-card {
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
+}
+.strategy-card :deep(.el-card__header) {
+  padding: 10px 14px;
+}
+.strategy-card :deep(.el-card__body) {
+  padding: 12px 14px;
+}
+.strategy-card :deep(.el-collapse-item__header) {
+  min-height: 38px;
+  height: auto;
+  padding: 6px 0;
+  line-height: 1.3;
+}
+.strategy-card :deep(.el-collapse-item__content) {
+  padding-bottom: 10px;
 }
 .card-title {
   font-size: 15px;
@@ -1464,31 +1677,15 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
 }
 .card-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 .margin-desc {
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
-}
-.safety-margin-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 4px 0 8px;
-}
-.safety-margin-label {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-.safety-margin-bar :deep(.el-input-number) {
-  width: 130px;
 }
 .group-grid,
 .assign-grid,
@@ -1496,19 +1693,19 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 .stage-stack,
 .schedule-stack {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 .group-grid {
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  margin-top: 12px;
+  margin-top: 10px;
 }
 .group-card,
 .assign-card,
 .stage-card,
 .pump-card {
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 12px;
+  border-radius: var(--radius-md);
+  padding: 10px;
   background: #fff;
 }
 .group-stats {
@@ -1536,21 +1733,81 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   margin-bottom: 8px;
 }
 .sub-section-title {
-  font-size: var(--font-size-base);
-  padding-left: 10px;
+  font-size: var(--font-size-sm);
+  padding-left: 8px;
   border-left: 3px solid #3b82f6;
   line-height: 1.2;
+  margin-bottom: 6px;
 }
 .equip-block {
   margin-top: 14px;
+}
+.equip-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 .equip-block-title {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--color-neutral-600);
-  margin-bottom: 6px;
   padding-left: 8px;
   border-left: 2px solid var(--border-base);
+}
+.equip-block > .equip-block-title {
+  margin-bottom: 6px;
+}
+.stage-fullscreen-btn {
+  display: none;
+}
+.stage-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  box-sizing: border-box;
+  width: 100dvw;
+  height: 100dvh;
+  background: #ffffff;
+  overflow: hidden;
+}
+.stage-fullscreen-shell {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) 10px calc(env(safe-area-inset-bottom, 0px) + 10px);
+  background: #ffffff;
+}
+.stage-fullscreen-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 32px;
+}
+.stage-table--fullscreen {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  height: auto;
+  margin: 0;
+  border-radius: var(--radius-sm);
+  -webkit-overflow-scrolling: touch;
+}
+.stage-table--fullscreen .st-table {
+  min-width: 720px;
+}
+.stage-table--fullscreen .st-table :deep(.el-input-number) {
+  width: 76px !important;
+}
+.stage-table--fullscreen .st-table :deep(.el-input-number .el-input__wrapper) {
+  padding-left: 4px;
+  padding-right: 4px;
 }
 .pump-foot-hint {
   margin-top: 6px;
@@ -1600,7 +1857,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   margin-left: auto;
 }
 .sub-section {
-  margin-top: 16px;
+  margin-top: 12px;
 }
 .sub-actions {
   margin-bottom: 10px;
@@ -1613,10 +1870,10 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 }
 /* ===== compact stage table (replaces stacked stage cards) ===== */
 .stage-table {
-  margin-top: 10px;
+  margin-top: 8px;
   overflow-x: auto;
   overflow-y: auto;
-  max-height: 420px; /* 约 10 行： 36px 行高 × 10 + 表头 */
+  max-height: 340px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
 }
@@ -1650,7 +1907,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   background: var(--color-neutral-100);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-  padding: 8px 10px;
+  padding: 6px 8px;
   text-align: center;
   border-bottom: 1px solid var(--border-subtle);
   white-space: nowrap;
@@ -1674,7 +1931,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   background: var(--color-neutral-50);
 }
 .st-num-col, .st-cap-col {
-  min-width: 110px;
+  min-width: 96px;
 }
 .st-act-col {
   width: 72px;
@@ -1706,7 +1963,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   margin-top: 2px;
 }
 .st-table :deep(.el-input-number) {
-  width: 84px !important;
+  width: 76px !important;
 }
 .st-table :deep(.el-input-number .el-input__wrapper) {
   padding-left: 4px;
@@ -1745,8 +2002,8 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 }
 .pump-grid {
   display: grid;
-  gap: 12px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 8px;
 }
 .pump-row {
   justify-content: flex-start;
@@ -1768,7 +2025,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   font-size: var(--font-size-xs);
 }
 .pump-table tbody td {
-  padding: 4px 10px;
+  padding: 3px 8px;
   text-align: center;
   vertical-align: middle;
 }
@@ -1784,7 +2041,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   color: var(--text-muted);
 }
 .pump-table :deep(.el-input-number) {
-  width: 96px !important;
+  width: 84px !important;
 }
 .pump-table :deep(.el-input-number .el-input__wrapper) {
   padding-left: 4px;
@@ -1811,7 +2068,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 .ld-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 .ld-count-label {
   width: 30px;
@@ -1863,6 +2120,21 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   font-size: var(--font-size-sm);
   color: var(--text-primary);
 }
+.ld-sub-name {
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+.ld-sub-type {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: var(--color-neutral-100);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+}
 .ld-picker-empty {
   padding: 12px;
   text-align: center;
@@ -1878,16 +2150,16 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 .ld-table {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   background: transparent;
   border: 0;
 }
 .ld-row {
   display: grid;
-  grid-template-columns: 160px minmax(0, 1fr) minmax(150px, 0.25fr) minmax(240px, 0.28fr);
+  grid-template-columns: 132px minmax(240px, 1fr) minmax(210px, 0.35fr) minmax(240px, 0.45fr);
   gap: 0;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: #fff;
   overflow: hidden;
 }
@@ -1902,10 +2174,10 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   border-color: transparent;
 }
 .ld-row--head .ld-col {
-  padding: 8px 14px;
+  padding: 7px 10px;
 }
 .ld-col {
-  padding: 12px 14px;
+  padding: 8px 10px;
   border-left: 1px solid var(--color-neutral-100);
   min-width: 0;
 }
@@ -1919,12 +2191,12 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   gap: 6px;
 }
 .ld-stats {
-  margin-top: 10px;
+  margin-top: 6px;
 }
 .ld-stats-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 .ld-stat-line {
   display: flex;
@@ -1932,7 +2204,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   justify-content: space-between;
   gap: 8px;
   font-size: var(--font-size-xs);
-  line-height: 1.6;
+  line-height: 1.35;
 }
 .ld-stat-label {
   color: var(--text-muted);
@@ -1956,9 +2228,22 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
-  max-height: 220px;
+  max-height: 144px;
   overflow-y: auto;
   padding-right: 4px;
+}
+.ld-col-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.ld-mobile-col-title {
+  display: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
 }
 .ld-tag-wrap--vertical {
   flex-direction: column;
@@ -1974,6 +2259,9 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   font-size: var(--font-size-xs);
 }
 .ld-tag--block :deep(.el-tag__content) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1994,8 +2282,8 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   white-space: nowrap;
 }
 .ld-tag--fixed {
-  width: 75px;
-  max-width: 75px;
+  width: 82px;
+  max-width: 82px;
   padding: 0 4px;
   font-size: var(--font-size-xs);
 }
@@ -2030,19 +2318,22 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   font-size: var(--font-size-xs);
 }
 .ld-mode-body {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 6px;
+  padding-top: 6px;
   border-top: 1px dashed var(--border-subtle);
 }
 .ld-ratio-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 90px 14px;
+  grid-template-columns: minmax(0, 1fr) 80px 12px;
   gap: 6px;
   align-items: center;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   font-size: var(--font-size-xs);
 }
 .ld-ratio-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--color-neutral-700);
   white-space: nowrap;
   overflow: hidden;
@@ -2143,6 +2434,79 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   white-space: nowrap;
 }
 @media (max-width: 900px) {
+  .strategy-page {
+    gap: 8px;
+  }
+  .strategy-card :deep(.el-card__header) {
+    padding: 9px 10px;
+  }
+  .strategy-card :deep(.el-card__body) {
+    padding: 10px;
+  }
+  .card-head {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .strategy-card--load .card-head {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  .card-actions {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    margin-left: auto;
+    min-width: 0;
+  }
+  .ld-actions {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    min-width: 190px;
+    row-gap: 6px;
+  }
+  .sub-section-head {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .sub-section-head :deep(.el-button) {
+    margin-left: auto;
+  }
+  .card-title {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+  .ld-actions {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    gap: 4px;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+  .ld-count-label {
+    width: auto;
+    min-width: 0;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+  .card-actions :deep(.el-input-number) {
+    width: 72px;
+  }
+  .card-actions :deep(.el-button) {
+    width: auto;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .ld-actions :deep(.el-button) {
+    flex: 0 0 auto;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .ld-actions :deep(.el-input-number) {
+    width: 56px;
+  }
   .ld-row,
   .ld-row--head {
     grid-template-columns: 1fr;
@@ -2153,9 +2517,187 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   .ld-col {
     border-left: 0;
     border-top: 1px dashed var(--color-neutral-100);
+    padding: 8px 10px;
   }
   .ld-col:first-child {
     border-top: 0;
   }
+  .ld-col:not(:first-child)::before {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: var(--font-weight-semibold);
+  }
+  .ld-col--zones::before {
+    content: '负荷分区';
+  }
+  .ld-col--subs::before {
+    content: '系统';
+  }
+  .ld-col--mode::before {
+    content: '分配方式';
+  }
+  .ld-col--zones::before,
+  .ld-col--subs::before {
+    display: none !important;
+  }
+  .ld-col--name .ld-stats-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px 10px;
+  }
+  .ld-col--name .ld-stat-line {
+    min-width: 0;
+  }
+  .ld-col-toolbar {
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .ld-mobile-col-title {
+    display: block;
+  }
+  .ld-col--zones .ld-add-btn,
+  .ld-col--subs .ld-add-btn {
+    width: auto;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+  .ld-col--zones .ld-tag-wrap,
+  .ld-col--subs .ld-tag-wrap {
+    max-height: 118px;
+    overflow-y: auto;
+  }
+  .ld-tag--fixed {
+    width: calc(50% - 3px);
+    max-width: calc(50% - 3px);
+    flex: 0 0 calc(50% - 3px);
+  }
+  .ld-col--subs .ld-tag--block {
+    width: auto;
+    max-width: none;
+  }
+  .ld-col--subs .ld-tag-wrap--vertical {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 6px;
+  }
+  .ld-ratio-row {
+    grid-template-columns: minmax(0, 1fr) 76px 12px;
+  }
+  .sub-title-row {
+    gap: 6px;
+  }
+  .sub-title-reset {
+    margin-left: 0;
+  }
+  .stage-table,
+  .pump-card {
+    margin-left: -2px;
+    margin-right: -2px;
+  }
+  .stage-fullscreen-btn {
+    display: inline-flex;
+    flex: 0 0 auto;
+  }
+  .stage-fullscreen-head {
+    min-height: 30px;
+  }
+  .stage-table--fullscreen {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  .pump-table {
+    width: auto;
+    max-width: 100%;
+    table-layout: fixed;
+    font-size: 12px;
+  }
+  .pump-table thead th {
+    padding: 4px 3px;
+    white-space: normal;
+    line-height: 1.15;
+    font-size: 11px;
+  }
+  .pump-table tbody td {
+    padding: 3px;
+  }
+  .pump-table .pt-name {
+    width: 68px;
+    max-width: 68px;
+    white-space: normal;
+    line-height: 1.2;
+  }
+  .pump-table .pt-extra {
+    width: 52px;
+  }
+  .pump-table :deep(.el-input-number) {
+    width: 58px !important;
+  }
+  .pump-table :deep(.el-input-number .el-input__wrapper) {
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+  .pump-table :deep(.el-input-number .el-input__inner) {
+    font-size: 12px;
+  }
+  .pump-table :deep(.el-input-number__increase),
+  .pump-table :deep(.el-input-number__decrease) {
+    width: 14px;
+  }
+  .pump-foot-hint {
+    font-size: 10px;
+    line-height: 1.35;
+  }
+}
+
+@media (max-width: 900px) and (orientation: portrait) {
+  .stage-fullscreen-shell {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100dvh;
+    height: 100dvw;
+    padding: 8px calc(env(safe-area-inset-top, 0px) + 10px) 8px calc(env(safe-area-inset-bottom, 0px) + 10px);
+    transform: translate(-50%, -50%) rotate(90deg);
+    transform-origin: center center;
+  }
+  .stage-table--fullscreen {
+    max-height: none;
+  }
+  .stage-table--fullscreen .st-table {
+    min-width: 720px;
+  }
+}
+</style>
+
+<style>
+.stage-fullscreen-overlay .st-table .el-input-number {
+  width: 76px !important;
+  height: 24px;
+  line-height: 24px;
+  vertical-align: middle;
+}
+.stage-fullscreen-overlay .st-table .el-input-number .el-input {
+  height: 24px;
+}
+.stage-fullscreen-overlay .st-table .el-input-number .el-input__wrapper {
+  min-height: 24px;
+  height: 24px;
+  box-sizing: border-box;
+  padding-left: 4px;
+  padding-right: 4px;
+  border-radius: 4px;
+}
+.stage-fullscreen-overlay .st-table .el-input-number .el-input__inner {
+  height: 22px;
+  line-height: 22px;
+  text-align: center;
+  font-size: 12px;
+}
+.stage-fullscreen-overlay .st-table .el-input-number__increase,
+.stage-fullscreen-overlay .st-table .el-input-number__decrease {
+  display: none;
 }
 </style>

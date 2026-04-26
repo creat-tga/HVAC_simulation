@@ -115,6 +115,22 @@ const filtered = computed<EquipmentBrief[]>(() => {
     return true
   })
 })
+const selectedEq = computed(() => (props.modelValue ? store.findById(props.modelValue) : undefined))
+
+// el-select-v2 需要 options 数组；其虚拟滚动可一次性接收上千条选项。
+const v2Options = computed(() => {
+  const list = filtered.value.map((eq) => ({
+    value: eq.id,
+    label: fmtLabel(eq),
+    eq,
+  }))
+  // 如果当前选中项不在过滤后的列表里，补上以位首。
+  const sel = selectedEq.value
+  if (sel && !list.some((o) => o.value === sel.id)) {
+    list.unshift({ value: sel.id, label: fmtLabel(sel), eq: sel })
+  }
+  return list
+})
 
 function onRemote(q: string) {
   query.value = q
@@ -141,9 +157,14 @@ function onChange(id: string | null) {
 }
 
 function fmtLabel(eq: EquipmentBrief): string {
-  const brand = eq.brand ? `${eq.brand} ` : ''
-  const model = eq.model_no || eq.name || ''
-  return `${brand}${model}`.trim()
+  // 选型列表中不包含厂家（品牌），只显示型号 / 名称。
+  return (eq.model_no || eq.name || '').trim()
+}
+
+function fmt1(n: unknown): string {
+  const v = Number(n)
+  if (!isFinite(v)) return ''
+  return (Math.round(v * 10) / 10).toString()
 }
 
 watch(
@@ -156,16 +177,20 @@ watch(
 </script>
 
 <template>
-  <el-select
+  <el-select-v2
     v-model="value"
+    :options="v2Options"
     filterable
     remote
     clearable
+    size="small"
     :remote-method="onRemote"
     :loading="loading"
     :placeholder="t('scheme.combo.pleasePick')"
     class="eq-picker-select"
     popper-class="eq-picker-popper"
+    :item-height="40"
+    :height="320"
     @change="onChange"
     @visible-change="(v: boolean) => v && ensureLoaded()"
   >
@@ -264,37 +289,77 @@ watch(
       </div>
     </template>
 
-    <el-option v-for="opt in filtered" :key="opt.id" :value="opt.id" :label="fmtLabel(opt)">
+    <template #default="{ item }">
       <div class="eq-opt">
-        <span class="eq-opt-main">{{ fmtLabel(opt) }}</span>
+        <span class="eq-opt-main">{{ item.label }}</span>
         <span class="eq-opt-sub">
-          <span v-if="opt.capacity">{{ opt.capacity }} kW</span>
-          <span v-if="(opt.parameters as any)?.flow">· {{ (opt.parameters as any).flow }} m³/h</span>
-          <span v-if="(opt.parameters as any)?.head">· {{ (opt.parameters as any).head }} mH₂O</span>
+          <span v-if="item.eq.capacity">{{ fmt1(item.eq.capacity) }} kW</span>
+          <span v-if="(item.eq.parameters as any)?.flow">· {{ fmt1((item.eq.parameters as any).flow) }} m³/h</span>
+          <span v-if="(item.eq.parameters as any)?.head">· {{ fmt1((item.eq.parameters as any).head) }} mH₂O</span>
         </span>
       </div>
-    </el-option>
+    </template>
 
     <template #empty>
       <div class="eq-empty">
         <el-empty :description="t('scheme.equipmentSearch.noResult')" :image-size="60" />
       </div>
     </template>
-  </el-select>
+  </el-select-v2>
 </template>
 
 <style scoped>
 .eq-picker-select {
+  width: var(--scheme-control-width, 150px);
+}
+.eq-picker-select :deep(.el-select__wrapper) {
+  min-height: var(--scheme-control-height, 24px);
+  height: var(--scheme-control-height, 24px);
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  line-height: var(--scheme-control-height, 24px);
+}
+.eq-picker-select :deep(.el-select__selection) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: var(--scheme-control-height, 24px);
+  text-align: center;
+}
+.eq-picker-select :deep(.el-select__placeholder),
+.eq-picker-select :deep(.el-select__selected-item),
+.eq-picker-select :deep(.el-select__selected-item span) {
+  line-height: var(--scheme-control-height, 24px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   width: 100%;
 }
 .eq-opt {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  line-height: 1.4;
+}
+.eq-opt-main {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .eq-opt-sub {
   color: #94a3b8;
   font-size: 12px;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .eq-empty {
   padding: 8px 0;
@@ -337,5 +402,41 @@ watch(
   color: #d97706;
   background: #fffbeb;
   border-bottom: 1px solid #fde68a;
+}
+/* 强制下拉面板最小宽度，避免被狭窄的输入框限制后选项被截断。
+   最终宽度 = max(输入框宽度, 360px)。 */
+.eq-picker-popper {
+  min-width: 360px !important;
+  width: 360px !important;
+}
+.eq-picker-popper .el-select-dropdown,
+.eq-picker-popper .el-vl__wrapper,
+.eq-picker-popper .el-vl__window {
+  min-width: 360px !important;
+  width: 360px !important;
+}
+.eq-picker-popper .eq-opt {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.eq-picker-popper .eq-opt-main {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.eq-picker-popper .eq-opt-sub {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 12px;
+}
+.eq-picker-popper .eq-opt-sub > span {
+  margin-left: 4px;
 }
 </style>

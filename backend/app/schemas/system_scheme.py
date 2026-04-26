@@ -164,6 +164,7 @@ class SystemSchemeListItem(BaseModel):
     building_id: uuid.UUID
     building_name: str | None = None
     subsystem_count: int = 0
+    safety_margin: float = 1.0
     cooling_capacity_total: float = 0.0
     heating_capacity_total: float = 0.0
     cooling_load_peak: float | None = None

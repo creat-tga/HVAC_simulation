@@ -867,6 +867,7 @@ async def list_scheme_items(
             "building_id": s.building_id,
             "building_name": bld_map.get(s.building_id).name if bld_map.get(s.building_id) else None,
             "subsystem_count": len(s.subsystems),
+            "safety_margin": s.safety_margin,
             "cooling_capacity_total": summary.cooling_capacity_total,
             "heating_capacity_total": summary.heating_capacity_total,
             "cooling_load_peak": summary.cooling_load_peak,

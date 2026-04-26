@@ -21,7 +21,7 @@ import {
   VideoPlay,
   OfficeBuilding,
   Setting,
-  EditPen,
+  Edit,
 } from '@element-plus/icons-vue'
 import { useSystemSchemeStore } from '@/stores/system-scheme'
 import { useProjectStore } from '@/stores/project'
@@ -81,6 +81,13 @@ const newForm = reactive<{ name: string; building_id: string | null }>({
   building_id: null,
 })
 
+const editDialogVisible = ref(false)
+const editForm = reactive<{ id: string; name: string; safety_margin: number }>({
+  id: '',
+  name: '',
+  safety_margin: 1.0,
+})
+
 function openNewDialog() {
   if (store.items.length >= 5) {
     ElMessage.warning(t('scheme.maxReached'))
@@ -138,32 +145,27 @@ async function removeOne(id: string, name: string) {
   ElMessage.success(t('common.deleted'))
 }
 
-// ------- 重命名（在卡片上直接编辑） -------
-async function renameScheme(id: string, currentName: string) {
-  let value: string | undefined
-  try {
-    const res = await ElMessageBox.prompt(
-      t('scheme.renamePrompt') || '请输入新的方案名称',
-      t('scheme.rename') || '重命名方案',
-      {
-        confirmButtonText: t('common.confirm') || '确定',
-        cancelButtonText: t('common.cancel') || '取消',
-        inputValue: currentName,
-        inputValidator: (val: string) => {
-          if (!val || !val.trim()) return t('scheme.namePlaceholder') || '名称不能为空'
-          if (val.trim().length > 60) return '长度不能超过 60'
-          return true
-        },
-      },
-    )
-    value = res.value
-  } catch {
+// ------- 编辑（名称 + 安全裕量） -------
+function openEditDialog(row: { id: string; name: string; safety_margin?: number | null }, event?: MouseEvent) {
+  event?.stopPropagation()
+  editForm.id = row.id
+  editForm.name = row.name
+  editForm.safety_margin = Number(row.safety_margin ?? 1.0)
+  editDialogVisible.value = true
+}
+
+async function confirmEdit() {
+  const name = editForm.name.trim()
+  if (!name) {
+    ElMessage.warning(t('scheme.namePlaceholder'))
     return
   }
-  const next = (value || '').trim()
-  if (!next || next === currentName) return
   try {
-    await updateScheme(id, { name: next })
+    await updateScheme(editForm.id, {
+      name,
+      safety_margin: Number(editForm.safety_margin ?? 1.0),
+    })
+    editDialogVisible.value = false
     await store.fetchList(projectId.value)
     ElMessage.success(t('common.updated') || '已更新')
   } catch (e: any) {
@@ -197,6 +199,9 @@ function formatNum(v: number | null | undefined): string {
 function formatCop(v: number | null | undefined): string {
   if (v === null || v === undefined) return '-'
   return v.toFixed(2)
+}
+function formatSafetyMargin(v: number | null | undefined): string {
+  return Number(v ?? 1.0).toFixed(2)
 }
 function coolingShort(item: { cooling_load_peak: number | null; cooling_capacity_total: number }) {
   return (
@@ -264,36 +269,35 @@ onMounted(async () => {
         <div class="scard-header">
           <div class="scard-title">
             <div class="scard-name-row">
-              <span class="scard-name">{{ row.name }}</span>
-              <el-button
-                class="scard-rename"
-                type="primary"
-                text
-                circle
-                size="small"
-                :icon="EditPen"
-                @click.stop="renameScheme(row.id, row.name)"
-                :title="t('scheme.rename') || '重命名'"
-              />
-              <el-tag
-                v-if="!isMobile"
-                :type="hasEnergyResult(row) ? 'success' : 'info'"
-                size="small"
-                effect="light"
-              >
-                {{ hasEnergyResult(row) ? t('scheme.hasEnergyResult') : t('scheme.noEnergyResult') }}
-              </el-tag>
-              <el-button
-                v-if="isMobile"
-                class="scard-del"
-                type="danger"
-                text
-                circle
-                size="small"
-                :icon="Delete"
-                @click.stop="removeOne(row.id, row.name)"
-                :title="t('common.delete')"
-              />
+              <div class="scard-name-main">
+                <span class="scard-name">{{ row.name }}</span>
+                <el-tag
+                  v-if="!isMobile"
+                  :type="hasEnergyResult(row) ? 'success' : 'info'"
+                  size="small"
+                  effect="light"
+                >
+                  {{ hasEnergyResult(row) ? t('scheme.hasEnergyResult') : t('scheme.noEnergyResult') }}
+                </el-tag>
+              </div>
+              <div class="scard-card-actions" @click.stop>
+                <el-button
+                  type="primary"
+                  :icon="Edit"
+                  size="small"
+                  text
+                  @click="openEditDialog(row, $event)"
+                  :title="t('common.edit') || '编辑'"
+                />
+                <el-button
+                  type="danger"
+                  :icon="Delete"
+                  size="small"
+                  text
+                  @click.stop="removeOne(row.id, row.name)"
+                  :title="t('common.delete')"
+                />
+              </div>
             </div>
             <div class="scard-meta">
               <span class="meta-pill meta-pill--bldg">
@@ -304,6 +308,10 @@ onMounted(async () => {
                 <el-icon class="meta-pill-icon"><Setting /></el-icon>
                 <span class="meta-pill-value">{{ row.subsystem_count }}</span>
                 <span class="meta-pill-unit">{{ t('scheme.subsystemUnit') }}</span>
+              </span>
+              <span class="meta-pill meta-pill--safety" @click.stop>
+                <span class="meta-pill-unit">{{ t('scheme.strategy.safetyMargin') }}</span>
+                <span class="meta-pill-value">{{ formatSafetyMargin(row.safety_margin) }}</span>
               </span>
             </div>
           </div>
@@ -401,15 +409,6 @@ onMounted(async () => {
           <el-button type="primary" size="small" @click.stop="openScheme(row.id)">
             {{ t('scheme.openDetail') }}
           </el-button>
-          <el-button
-            type="danger"
-            size="small"
-            text
-            :icon="Delete"
-            @click.stop="removeOne(row.id, row.name)"
-          >
-            {{ t('common.delete') }}
-          </el-button>
         </div>
       </div>
     </div>
@@ -469,6 +468,29 @@ onMounted(async () => {
       <template #footer>
         <el-button @click="newDialogVisible = false">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" @click="confirmNew">{{ t('common.create') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="editDialogVisible" title="编辑方案" width="420px">
+      <el-form label-width="96px">
+        <el-form-item :label="t('scheme.name')" required>
+          <el-input v-model="editForm.name" :placeholder="t('scheme.namePlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('scheme.strategy.safetyMargin')" required>
+          <el-input-number
+            v-model="editForm.safety_margin"
+            :min="0"
+            :max="1.2"
+            :step="0.01"
+            :precision="2"
+            controls-position="right"
+            style="width: 100%"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="confirmEdit">{{ t('common.save') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -560,15 +582,39 @@ onMounted(async () => {
 }
 .scard-name-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+}
+.scard-name-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
 }
 .scard-name {
   font-size: 17px;
   font-weight: 700;
   color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
+.scard-card-actions {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+}
+.scard-card-actions :deep(.el-button) {
+  padding: 4px;
+}
+.scard-card-actions :deep(.el-button + .el-button) {
+  margin-left: 2px;
+}
+/* kept for compatibility with older hot-reloaded DOM */
 .scard-rename {
   flex-shrink: 0;
   margin-left: -4px;
@@ -605,6 +651,21 @@ onMounted(async () => {
   background: linear-gradient(135deg, #ecfeff, #f0f9ff);
   border-color: rgba(8, 145, 178, 0.22);
   color: #0e7490;
+}
+.meta-pill--safety {
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: #f8fafc;
+}
+.meta-pill--safety :deep(.el-input-number) {
+  width: 92px;
+}
+.meta-pill--safety :deep(.el-input__wrapper) {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.meta-pill--safety :deep(.el-input__inner) {
+  text-align: center;
 }
 .meta-pill-icon {
   display: inline-flex;
@@ -752,13 +813,17 @@ onMounted(async () => {
   }
   .scard { padding: 14px; gap: 10px; }
   .scard-name { font-size: 16px; }
+  .scard-name-main {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .scard-card-actions { margin-left: 4px; }
   .scard-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 8px; }
   .stat-item { padding: 6px 4px; }
   .stat-tag { font-size: 10.5px; padding: 1px 5px; }
   .stat-name { font-size: 11px; }
   .stat-value { font-size: 14px; }
-  .scard-del { margin-left: auto; }
-
   .mobile-action-bar {
     position: fixed;
     left: 12px;

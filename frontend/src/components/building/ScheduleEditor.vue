@@ -11,7 +11,7 @@
  * bulk fill, multi-select, conflict banner.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ElIcon, ElSelect, ElOption, ElAlert } from 'element-plus'
+import { ElIcon, ElCascader, ElAlert } from 'element-plus'
 import { Delete, MagicStick, User, Sunny, Lightning, Position } from '@element-plus/icons-vue'
 import type { DaySchedule } from '@/types/building'
 
@@ -55,23 +55,6 @@ const ratios = computed(() => ensureRatios(props.modelValue))
 // time axis tick hours (every 2 hours: 0,2,4,...,22)
 const tickHours = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22]
 
-// individual reactive fields wired to v-model with explicit setters so changes propagate
-const startMonth = computed({
-  get: () => props.modelValue.start_month,
-  set: v => patch({ start_month: v })
-})
-const startDay = computed({
-  get: () => props.modelValue.start_day,
-  set: v => patch({ start_day: v })
-})
-const endMonth = computed({
-  get: () => props.modelValue.end_month,
-  set: v => patch({ end_month: v })
-})
-const endDay = computed({
-  get: () => props.modelValue.end_day,
-  set: v => patch({ end_day: v })
-})
 const nameField = computed({
   get: () => props.modelValue.name,
   set: v => patch({ name: v })
@@ -124,12 +107,19 @@ const typeIcon = computed(() => TYPE_ICONS[props.type as keyof typeof TYPE_ICONS
 // ===== month / day cascading =====
 const months = Array.from({ length: 12 }, (_, i) => ({ v: i + 1, label: `${i + 1}月` }))
 const daysInMonth = (m: number) => new Date(2024, m, 0).getDate()
-const startDays = computed(() =>
-  Array.from({ length: daysInMonth(props.modelValue.start_month) }, (_, i) => ({ v: i + 1, label: `${i + 1}日` }))
-)
-const endDays = computed(() =>
-  Array.from({ length: daysInMonth(props.modelValue.end_month) }, (_, i) => ({ v: i + 1, label: `${i + 1}日` }))
-)
+const dateOptions = computed(() => months.map(m => ({
+  value: m.v,
+  label: m.label,
+  children: Array.from({ length: daysInMonth(m.v) }, (_, i) => ({ value: i + 1, label: `${i + 1}日` }))
+})))
+const startDateValue = computed<[number, number]>({
+  get: () => [props.modelValue.start_month, props.modelValue.start_day],
+  set: ([month, day]) => patch({ start_month: month, start_day: day })
+})
+const endDateValue = computed<[number, number]>({
+  get: () => [props.modelValue.end_month, props.modelValue.end_day],
+  set: ([month, day]) => patch({ end_month: month, end_day: day })
+})
 watch(() => props.modelValue.start_month, m => {
   const max = daysInMonth(m)
   if (props.modelValue.start_day > max) patch({ start_day: max })
@@ -141,14 +131,42 @@ watch(() => props.modelValue.end_month, m => {
 
 // ===== weekdays =====
 const weekdayLabels = ['一', '二', '三', '四', '五', '六', '日']
-function toggleWeekday(d: number) {
+const weekdayPaintState = ref<{ target: boolean } | null>(null)
+
+function setWeekdaySelected(d: number, selected: boolean) {
   const days = [...(props.modelValue.days || [])]
   const idx = days.indexOf(d)
-  if (idx >= 0) days.splice(idx, 1)
-  else { days.push(d); days.sort((a, b) => a - b) }
+  if (selected && idx < 0) days.push(d)
+  if (!selected && idx >= 0) days.splice(idx, 1)
+  days.sort((a, b) => a - b)
   patch({ days })
 }
 const isWeekdaySelected = (d: number) => (props.modelValue.days || []).includes(d)
+function toggleWeekday(d: number) {
+  setWeekdaySelected(d, !isWeekdaySelected(d))
+}
+function onWeekdayPointerDown(e: PointerEvent, d: number) {
+  if (e.button !== 0) return
+  e.preventDefault()
+  const target = !isWeekdaySelected(d)
+  setWeekdaySelected(d, target)
+  weekdayPaintState.value = { target }
+  window.addEventListener('pointermove', onWeekdayPointerMove)
+  window.addEventListener('pointerup', onWeekdayPointerEnd)
+}
+function onWeekdayPointerMove(e: PointerEvent) {
+  if (!weekdayPaintState.value) return
+  const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+  const pill = el?.closest('[data-weekday]') as HTMLElement | null
+  if (!pill) return
+  const d = Number(pill.dataset.weekday)
+  if (!Number.isNaN(d)) setWeekdaySelected(d, weekdayPaintState.value.target)
+}
+function onWeekdayPointerEnd() {
+  weekdayPaintState.value = null
+  window.removeEventListener('pointermove', onWeekdayPointerMove)
+  window.removeEventListener('pointerup', onWeekdayPointerEnd)
+}
 
 // ===== editing =====
 const editingHour = ref<number | null>(null)
@@ -257,14 +275,17 @@ function cellStyle(_h: number, val: number) {
 
 // ===== binary paint drag =====
 const paintState = ref<{ target: number; lastHour: number } | null>(null)
+function paintBinaryHour(h: number, target: number) {
+  const arr = [...ratios.value]
+  arr[h] = target
+  patch({ hourly_ratios: arr })
+}
 function onBinaryMouseDown(e: MouseEvent, h: number) {
   if (e.button !== 0) return
   e.preventDefault()
   const cur = ratios.value[h] ?? 0
   const target = cur >= 50 ? 0 : 100
-  const arr = [...ratios.value]
-  arr[h] = target
-  patch({ hourly_ratios: arr })
+  paintBinaryHour(h, target)
   paintState.value = { target, lastHour: h }
   window.addEventListener('mousemove', onBinaryPaintMove)
   window.addEventListener('mouseup', onBinaryPaintEnd)
@@ -276,15 +297,42 @@ function onBinaryPaintMove(e: MouseEvent) {
   if (!cellEl) return
   const h = Number(cellEl.dataset.hour)
   if (Number.isNaN(h) || h === paintState.value.lastHour) return
-  const arr = [...ratios.value]
-  arr[h] = paintState.value.target
-  patch({ hourly_ratios: arr })
+  paintBinaryHour(h, paintState.value.target)
   paintState.value.lastHour = h
 }
 function onBinaryPaintEnd() {
   paintState.value = null
   window.removeEventListener('mousemove', onBinaryPaintMove)
   window.removeEventListener('mouseup', onBinaryPaintEnd)
+}
+function onBinaryTouchStart(e: TouchEvent, h: number) {
+  e.preventDefault()
+  const cur = ratios.value[h] ?? 0
+  const target = cur >= 50 ? 0 : 100
+  paintBinaryHour(h, target)
+  paintState.value = { target, lastHour: h }
+  window.addEventListener('touchmove', onBinaryTouchMove, { passive: false })
+  window.addEventListener('touchend', onBinaryTouchEnd)
+  window.addEventListener('touchcancel', onBinaryTouchEnd)
+}
+function onBinaryTouchMove(e: TouchEvent) {
+  if (!paintState.value) return
+  e.preventDefault()
+  const touch = e.touches[0]
+  if (!touch) return
+  const el = document.elementFromPoint(touch.clientX, touch.clientY) as HTMLElement | null
+  const cellEl = el?.closest('[data-hour]') as HTMLElement | null
+  if (!cellEl) return
+  const h = Number(cellEl.dataset.hour)
+  if (Number.isNaN(h) || h === paintState.value.lastHour) return
+  paintBinaryHour(h, paintState.value.target)
+  paintState.value.lastHour = h
+}
+function onBinaryTouchEnd() {
+  paintState.value = null
+  window.removeEventListener('touchmove', onBinaryTouchMove)
+  window.removeEventListener('touchend', onBinaryTouchEnd)
+  window.removeEventListener('touchcancel', onBinaryTouchEnd)
 }
 
 // ===== click-outside to commit edit =====
@@ -297,7 +345,12 @@ function onDocClick(e: MouseEvent) {
   }
 }
 onMounted(() => document.addEventListener('mousedown', onDocClick))
-onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocClick)
+  onWeekdayPointerEnd()
+  onBinaryPaintEnd()
+  onBinaryTouchEnd()
+})
 </script>
 
 <template>
@@ -321,9 +374,24 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
           <div class="sched-type-tag">{{ palette.tagZh }}时间表</div>
         </div>
       </div>
-      <button type="button" v-if="removable !== false" class="del-btn" @click="emit('remove')" title="删除时间表">
-        <el-icon :size="14"><Delete /></el-icon>
-      </button>
+      <div class="sched-header-actions">
+        <div class="toolbar toolbar--header">
+          <div class="tb-preset-row tb-preset-row--primary">
+            <span class="tb-label">快捷预设</span>
+            <button type="button" class="tb-btn" @click="presetOffice9to18">
+              <el-icon :size="12"><MagicStick /></el-icon>办公9-18时
+            </button>
+          </div>
+          <div class="tb-preset-row tb-preset-row--secondary">
+            <button type="button" class="tb-btn" @click="presetAlwaysOn">全天</button>
+            <button type="button" class="tb-btn" @click="presetNight">夜间</button>
+            <button type="button" class="tb-btn tb-btn-danger" @click="presetClear">清空</button>
+          </div>
+        </div>
+        <button type="button" v-if="removable !== false" class="del-btn" @click="emit('remove')" title="删除时间表">
+          <el-icon :size="14"><Delete /></el-icon>
+        </button>
+      </div>
     </div>
 
     <!-- conflict banner -->
@@ -341,19 +409,23 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
       <div class="meta-row">
           <div class="meta-label">日期</div>
       <div class="meta-controls">
-        <el-select v-model="startMonth" size="small" class="meta-select">
-          <el-option v-for="m in months" :key="m.v" :value="m.v" :label="m.label" />
-        </el-select>
-        <el-select v-model="startDay" size="small" class="meta-select">
-          <el-option v-for="d in startDays" :key="d.v" :value="d.v" :label="d.label" />
-        </el-select>
+        <el-cascader
+          v-model="startDateValue"
+          :options="dateOptions"
+          size="small"
+          class="meta-cascader"
+          :show-all-levels="true"
+          :clearable="false"
+        />
         <span class="meta-sep">至</span>
-        <el-select v-model="endMonth" size="small" class="meta-select">
-          <el-option v-for="m in months" :key="m.v" :value="m.v" :label="m.label" />
-        </el-select>
-        <el-select v-model="endDay" size="small" class="meta-select">
-          <el-option v-for="d in endDays" :key="d.v" :value="d.v" :label="d.label" />
-        </el-select>
+        <el-cascader
+          v-model="endDateValue"
+          :options="dateOptions"
+          size="small"
+          class="meta-cascader"
+          :show-all-levels="true"
+          :clearable="false"
+        />
       </div>
     </div>
 
@@ -363,9 +435,12 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
         <button type="button"
           v-for="(label, i) in weekdayLabels"
           :key="i"
+          :data-weekday="i + 1"
           class="weekday-pill"
           :class="{ 'is-active': isWeekdaySelected(i + 1) }"
-          @click="toggleWeekday(i + 1)"
+          @pointerdown="onWeekdayPointerDown($event, i + 1)"
+          @keydown.enter.prevent="toggleWeekday(i + 1)"
+          @keydown.space.prevent="toggleWeekday(i + 1)"
         >
           {{ label }}
         </button>
@@ -374,7 +449,9 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
     </div>
 
     <!-- heatmap with always-on top values (numbers are click-to-edit) -->
-    <div class="heatmap-wrap" :class="{ 'is-binary': isBinary }">
+    <div class="time-row">
+      <div class="meta-label">时刻</div>
+      <div class="heatmap-wrap" :class="{ 'is-binary': isBinary }">
       <div class="hm-values" v-if="!isBinary">
         <template v-for="(val, h) in ratios" :key="`v-${h}`">
           <div
@@ -412,6 +489,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
           :style="cellStyle(h, val)"
           :data-hour="h"
           @mousedown="isBinary ? onBinaryMouseDown($event, h) : onCellMouseDown($event, h)"
+          @touchstart="isBinary ? onBinaryTouchStart($event, h) : undefined"
           @dblclick="!isBinary && onCellDblClick(h)"
           :title="isBinary ? '点击切换开关，按住拖动批量设置' : '上下拖动调整数值'"
         ></div>
@@ -419,17 +497,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
       <div class="hm-ticks">
         <span v-for="t in tickHours" :key="t" class="hm-tick" :style="{ gridColumn: `${t + 1} / span 1` }">{{ t }}时</span>
       </div>
-    </div>
-
-    <!-- toolbar -->
-    <div class="toolbar">
-      <span class="tb-label">快捷预设</span>
-      <button type="button" class="tb-btn" @click="presetOffice9to18">
-        <el-icon :size="12"><MagicStick /></el-icon>办公 9–18时
-      </button>
-      <button type="button" class="tb-btn" @click="presetAlwaysOn">全天</button>
-      <button type="button" class="tb-btn" @click="presetNight">夜间</button>
-      <button type="button" class="tb-btn tb-btn-danger" @click="presetClear">清空</button>
+      </div>
     </div>
 
     <div class="sched-foot" v-if="!isBinary">
@@ -469,8 +537,9 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
 .sched-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 .sched-header-left {
   display: flex;
@@ -493,6 +562,13 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
   flex-direction: column;
   gap: 4px;
   flex: 1;
+  min-width: 0;
+}
+.sched-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
   min-width: 0;
 }
 .sched-name-input {
@@ -574,6 +650,9 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
 .meta-select {
   width: 80px;
 }
+.meta-cascader {
+  width: 118px;
+}
 .meta-select :deep(.el-select__wrapper) {
   background: #fafafa !important;
   border: 1px solid #e4e4e7 !important;
@@ -588,6 +667,18 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
 .meta-select :deep(.el-select__placeholder) {
   color: #3f3f46 !important;
 }
+.meta-cascader :deep(.el-input__wrapper) {
+  background: #fafafa !important;
+  border: 1px solid #e4e4e7 !important;
+  box-shadow: none !important;
+  min-height: 30px;
+  font-size: 13px;
+}
+.meta-cascader :deep(.el-input),
+.meta-cascader :deep(.el-input__inner) {
+  color: #3f3f46 !important;
+  font-size: 13px !important;
+}
 .meta-sep {
   color: #a1a1aa;
   font-size: 13px;
@@ -597,6 +688,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
 .weekday-pills {
   display: flex;
   gap: 6px;
+  touch-action: none;
 }
 .weekday-pill {
   width: 32px;
@@ -621,10 +713,20 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
 }
 
 /* ===== heatmap ===== */
+.time-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.time-row > .meta-label {
+  line-height: 24px;
+}
 .heatmap-wrap {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 .hm-values {
   display: grid;
@@ -787,6 +889,19 @@ body.sched-dragging * {
   padding-top: 16px;
   border-top: 1px solid #f4f4f5;
 }
+.toolbar--header {
+  padding-top: 0;
+  border-top: 0;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.tb-preset-row {
+  display: contents;
+}
+.toolbar--header .tb-btn {
+  padding: 5px 8px;
+  white-space: nowrap;
+}
 .tb-group {
   display: flex;
   align-items: center;
@@ -880,11 +995,127 @@ body.sched-dragging * {
   text-align: center;
   padding-top: 4px;
 }
+
+@media (max-width: 900px) {
+  .sched-card {
+    padding: 14px;
+    gap: 14px;
+    border-radius: 12px;
+  }
+  .sched-header {
+    gap: 10px;
+  }
+  .sched-header-left {
+    flex: 1 1 150px;
+  }
+  .sched-header-actions {
+    flex: 0 0 auto;
+    justify-content: flex-end;
+    max-width: 100%;
+  }
+  .toolbar--header {
+    gap: 4px;
+    flex-direction: column;
+    align-items: flex-end;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    overflow: visible;
+    width: max-content;
+    max-width: 100%;
+  }
+  .toolbar--header .tb-preset-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    width: auto;
+    min-width: 0;
+  }
+  .toolbar--header .tb-preset-row--secondary {
+    align-self: flex-end;
+  }
+  .toolbar--header .tb-label {
+    flex: 0 0 auto;
+    display: inline-flex;
+    white-space: nowrap;
+  }
+  .toolbar--header .tb-btn {
+    padding: 5px 7px;
+    line-height: 1.2;
+  }
+  .meta-row-wrap {
+    gap: 10px;
+  }
+  .time-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+  }
+  .meta-row {
+    width: 100%;
+    align-items: center;
+  }
+  .meta-controls {
+    flex: 1;
+    flex-wrap: nowrap;
+  }
+  .meta-cascader {
+    width: 108px;
+    min-width: 0;
+  }
+  .heatmap-wrap.is-binary .heatmap-row {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    height: auto;
+    gap: 4px;
+  }
+  .heatmap-wrap.is-binary .hm-cell {
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .heatmap-wrap.is-binary .hm-cell::after {
+    content: attr(data-hour);
+    font-size: 11px;
+    font-weight: 700;
+    color: rgba(15, 23, 42, 0.72);
+    font-variant-numeric: tabular-nums;
+  }
+  .heatmap-wrap.is-binary .hm-cell.is-on::after {
+    color: #ffffff;
+  }
+  .heatmap-wrap.is-binary .hm-ticks {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .heatmap-wrap.is-binary .heatmap-row {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 360px) {
+  .meta-controls {
+    flex-wrap: wrap;
+  }
+  .meta-cascader {
+    width: calc(50% - 14px);
+  }
+  .meta-sep {
+    width: auto;
+    text-align: center;
+  }
+}
 </style>
 
 <!-- popper styles for el-select dropdown (dark) -->
 <style>
 .el-select__popper.el-popper {
   /* keep default light dropdown for legibility unless we want full dark */
+}
+.sched-card .meta-cascader .el-input,
+.sched-card .meta-cascader .el-input__wrapper,
+.sched-card .meta-cascader .el-input__inner {
+  font-size: 13px !important;
 }
 </style>
