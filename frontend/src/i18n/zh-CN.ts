@@ -60,6 +60,14 @@ export default {
       admin: '系统管理',
     },
   },
+  mobileNav: {
+    templates: '模板',
+    mine: '我的',
+  },
+  library: {
+    hubTitle: '模板库',
+    hubSub: '在此选择需要查看或管理的模板类别',
+  },
   workspace: {
     backToProjects: '返回工程列表',
     projectLabel: '当前工程',
@@ -461,7 +469,7 @@ export default {
     totalCost: '运行费用(元)',
     noSimulation: '未仿真',
     runLoad: '负荷计算',
-    runAllLoads: '全部计算负荷',
+    runAllLoads: '负荷计算',
     noZonesWarning: '建筑未配置分区，无法运行负荷仿真',
   },
   system: {
@@ -640,7 +648,7 @@ export default {
     sectionTitle: '方案管理',
     sectionHint: '在此处管理项目下的所有系统方案并发起能耗仿真',
     defaultName: '方案 {n}',
-    runAllEnergy: '全部开始仿真',
+    runAllEnergy: '开始仿真',
     runEnergy: '开始仿真',
     energySimTba: '能耗仿真模块即将上线，敬请期待',
     hasEnergyResult: '已仿真',
@@ -737,8 +745,8 @@ export default {
       systemCop: '系统能效',
       annualCost: '年运行费用',
       noLoadData: '尚无负荷仿真结果',
-      capacityShort: '当前总容量小于建筑负荷峰值，请补充设备',
-      capacityShortDetailed: '{kinds} 装机容量小于负荷峰值，请补充设备',
+      capacityShort: '当前总容量小于建筑负荷峰值，请确认',
+      capacityShortDetailed: '{kinds}装机容量小于负荷峰值，请确认',
       coolingShortLabel: '制冷',
       heatingShortLabel: '制热',
       cooling: '制冷',

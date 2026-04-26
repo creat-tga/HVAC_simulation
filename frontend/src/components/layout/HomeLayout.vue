@@ -17,11 +17,14 @@ import {
   Lock,
 } from '@element-plus/icons-vue'
 import TopActionBar from '@/components/layout/TopActionBar.vue'
+import MobileBottomNav from '@/components/layout/MobileBottomNav.vue'
+import { useResponsive } from '@/composables/useResponsive'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const authStore = useAuthStore()
+const { isMobile } = useResponsive()
 
 interface NavItem {
   key: string
@@ -51,8 +54,8 @@ const isActive = (item: NavItem) => item.matches.includes(route.name as string)
 </script>
 
 <template>
-  <div class="home-layout">
-    <aside class="hl-sidebar">
+  <div class="home-layout" :class="{ 'is-mobile': isMobile }">
+    <aside v-if="!isMobile" class="hl-sidebar">
       <div class="hl-brand">
         <div class="hl-brand-logo">
           <el-icon :size="20"><HomeFilled /></el-icon>
@@ -94,6 +97,7 @@ const isActive = (item: NavItem) => item.matches.includes(route.name as string)
         <router-view />
       </div>
     </main>
+    <MobileBottomNav v-if="isMobile" />
   </div>
 </template>
 
@@ -217,20 +221,6 @@ const isActive = (item: NavItem) => item.matches.includes(route.name as string)
 
 @media (max-width: 768px) {
   .home-layout { flex-direction: column; }
-  .hl-sidebar {
-    width: 100%;
-    flex-direction: row;
-    padding: 8px;
-    gap: 4px;
-    overflow-x: auto;
-  }
-  .hl-brand, .hl-footer { display: none; }
-  .hl-nav {
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-  .hl-nav-item { flex-shrink: 0; padding: 8px 12px; }
-  .hl-nav-label { font-size: 12px; }
+  .hl-main { padding-bottom: 56px; }
 }
 </style>

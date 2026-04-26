@@ -21,10 +21,13 @@ import {
   VideoPlay,
   OfficeBuilding,
   Setting,
+  EditPen,
 } from '@element-plus/icons-vue'
 import { useSystemSchemeStore } from '@/stores/system-scheme'
 import { useProjectStore } from '@/stores/project'
+import { useResponsive } from '@/composables/useResponsive'
 import { getSimulations } from '@/api/simulation'
+import { updateScheme } from '@/api/system-scheme'
 import type { SystemSchemeCreate } from '@/types/system-scheme'
 
 const route = useRoute()
@@ -32,6 +35,7 @@ const router = useRouter()
 const { t } = useI18n()
 const store = useSystemSchemeStore()
 const projectStore = useProjectStore()
+const { isMobile } = useResponsive()
 
 const projectId = computed(() => route.params.projectId as string)
 
@@ -134,6 +138,39 @@ async function removeOne(id: string, name: string) {
   ElMessage.success(t('common.deleted'))
 }
 
+// ------- 重命名（在卡片上直接编辑） -------
+async function renameScheme(id: string, currentName: string) {
+  let value: string | undefined
+  try {
+    const res = await ElMessageBox.prompt(
+      t('scheme.renamePrompt') || '请输入新的方案名称',
+      t('scheme.rename') || '重命名方案',
+      {
+        confirmButtonText: t('common.confirm') || '确定',
+        cancelButtonText: t('common.cancel') || '取消',
+        inputValue: currentName,
+        inputValidator: (val: string) => {
+          if (!val || !val.trim()) return t('scheme.namePlaceholder') || '名称不能为空'
+          if (val.trim().length > 60) return '长度不能超过 60'
+          return true
+        },
+      },
+    )
+    value = res.value
+  } catch {
+    return
+  }
+  const next = (value || '').trim()
+  if (!next || next === currentName) return
+  try {
+    await updateScheme(id, { name: next })
+    await store.fetchList(projectId.value)
+    ElMessage.success(t('common.updated') || '已更新')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || t('common.error'))
+  }
+}
+
 // ------- 导航 -------
 function openScheme(id: string) {
   router.push(`/projects/${projectId.value}/system-schemes/${id}`)
@@ -194,7 +231,7 @@ onMounted(async () => {
 <template>
   <div class="scheme-list-view">
     <!-- Section header -->
-    <div class="section-header">
+    <div v-if="!isMobile" class="section-header">
       <div class="section-header-left">
         <h2>{{ t('scheme.sectionTitle') }}</h2>
         <span class="section-hint">{{ t('scheme.sectionHint') }}</span>
@@ -228,13 +265,35 @@ onMounted(async () => {
           <div class="scard-title">
             <div class="scard-name-row">
               <span class="scard-name">{{ row.name }}</span>
+              <el-button
+                class="scard-rename"
+                type="primary"
+                text
+                circle
+                size="small"
+                :icon="EditPen"
+                @click.stop="renameScheme(row.id, row.name)"
+                :title="t('scheme.rename') || '重命名'"
+              />
               <el-tag
+                v-if="!isMobile"
                 :type="hasEnergyResult(row) ? 'success' : 'info'"
                 size="small"
                 effect="light"
               >
                 {{ hasEnergyResult(row) ? t('scheme.hasEnergyResult') : t('scheme.noEnergyResult') }}
               </el-tag>
+              <el-button
+                v-if="isMobile"
+                class="scard-del"
+                type="danger"
+                text
+                circle
+                size="small"
+                :icon="Delete"
+                @click.stop="removeOne(row.id, row.name)"
+                :title="t('common.delete')"
+              />
             </div>
             <div class="scard-meta">
               <span class="meta-pill meta-pill--bldg">
@@ -253,17 +312,19 @@ onMounted(async () => {
         <div class="scard-stats">
           <!-- 1. 冷负荷峰值 -->
           <div class="stat-item stat-cool">
-            <div class="stat-label">{{ t('scheme.summary.coolingLoadPeak') }}</div>
+            <span class="stat-tag stat-tag--cool">制<wbr />冷</span>
+            <span class="stat-name">负荷<wbr />峰值</span>
             <div class="stat-value">
-              {{ formatNum(row.cooling_load_peak) }}
+              <span class="stat-num">{{ formatNum(row.cooling_load_peak) }}</span>
               <span class="stat-unit">kW</span>
             </div>
           </div>
           <!-- 2. 热负荷峰值 -->
           <div class="stat-item stat-heat">
-            <div class="stat-label">{{ t('scheme.summary.heatingLoadPeak') }}</div>
+            <span class="stat-tag stat-tag--heat">制<wbr />热</span>
+            <span class="stat-name">负荷<wbr />峰值</span>
             <div class="stat-value">
-              {{ formatNum(row.heating_load_peak) }}
+              <span class="stat-num">{{ formatNum(row.heating_load_peak) }}</span>
               <span class="stat-unit">kW</span>
             </div>
           </div>
@@ -272,9 +333,10 @@ onMounted(async () => {
             class="stat-item stat-cool-soft"
             :class="{ 'stat-short': coolingShort(row) }"
           >
-            <div class="stat-label">{{ t('scheme.summary.installedCool') }}</div>
+            <span class="stat-tag stat-tag--cool">制<wbr />冷</span>
+            <span class="stat-name">装机<wbr />容量</span>
             <div class="stat-value">
-              {{ formatNum(row.cooling_capacity_total) }}
+              <span class="stat-num">{{ formatNum(row.cooling_capacity_total) }}</span>
               <span class="stat-unit">kW</span>
             </div>
           </div>
@@ -283,46 +345,51 @@ onMounted(async () => {
             class="stat-item stat-heat-soft"
             :class="{ 'stat-short': heatingShort(row) }"
           >
-            <div class="stat-label">{{ t('scheme.summary.installedHeat') }}</div>
+            <span class="stat-tag stat-tag--heat">制<wbr />热</span>
+            <span class="stat-name">装机<wbr />容量</span>
             <div class="stat-value">
-              {{ formatNum(row.heating_capacity_total) }}
+              <span class="stat-num">{{ formatNum(row.heating_capacity_total) }}</span>
               <span class="stat-unit">kW</span>
             </div>
           </div>
           <!-- 5. 累计制冷量 -->
           <div class="stat-item stat-energy">
-            <div class="stat-label">{{ t('scheme.summary.annualCooling') }}</div>
+            <span class="stat-tag stat-tag--cool">制<wbr />冷</span>
+            <span class="stat-name">年<wbr />累计</span>
             <div class="stat-value">
-              {{ formatNum(row.annual_cooling_total) }}
+              <span class="stat-num">{{ formatNum(row.annual_cooling_total) }}</span>
               <span class="stat-unit">kWh</span>
             </div>
           </div>
           <!-- 6. 累计制热量 -->
           <div class="stat-item stat-energy">
-            <div class="stat-label">{{ t('scheme.summary.annualHeating') }}</div>
+            <span class="stat-tag stat-tag--heat">制<wbr />热</span>
+            <span class="stat-name">年<wbr />累计</span>
             <div class="stat-value">
-              {{ formatNum(row.annual_heating_total) }}
+              <span class="stat-num">{{ formatNum(row.annual_heating_total) }}</span>
               <span class="stat-unit">kWh</span>
             </div>
           </div>
           <!-- 7. 系统能耗 -->
           <div class="stat-item stat-energy">
-            <div class="stat-label">{{ t('scheme.summary.systemEnergy') }}</div>
+            <span class="stat-tag stat-tag--sys">系<wbr />统</span>
+            <span class="stat-name">年<wbr />能耗</span>
             <div class="stat-value">
-              {{ formatNum(row.annual_energy_total) }}
+              <span class="stat-num">{{ formatNum(row.annual_energy_total) }}</span>
               <span class="stat-unit">kWh</span>
             </div>
           </div>
           <!-- 8. 系统能效 -->
           <div class="stat-item stat-cop">
-            <div class="stat-label">{{ t('scheme.summary.systemCop') }}</div>
+            <span class="stat-tag stat-tag--sys">系<wbr />统</span>
+            <span class="stat-name">能效<wbr />比</span>
             <div class="stat-value">
-              {{ formatCop(row.system_cop) }}
+              <span class="stat-num">{{ formatCop(row.system_cop) }}</span>
             </div>
           </div>
         </div>
 
-        <div class="scard-actions" @click.stop>
+        <div v-if="!isMobile" class="scard-actions" @click.stop>
           <el-button
             size="small"
             :icon="VideoPlay"
@@ -355,6 +422,26 @@ onMounted(async () => {
         {{ t('scheme.addNew') }}
       </el-button>
     </el-empty>
+
+    <!-- 移动端底部固定主操作栏 -->
+    <div v-if="isMobile" class="mobile-action-bar">
+      <el-button
+        class="mab-btn"
+        :icon="VideoPlay"
+        :disabled="!store.items.length"
+        @click="runAllEnergySim"
+      >
+        {{ t('scheme.runAllEnergy') }}
+      </el-button>
+      <el-button
+        class="mab-btn"
+        type="primary"
+        :icon="Plus"
+        @click="openNewDialog"
+      >
+        {{ t('scheme.addNew') }}
+      </el-button>
+    </div>
 
     <!-- 新建对话框 -->
     <el-dialog v-model="newDialogVisible" :title="t('scheme.addNew')" width="480px">
@@ -482,6 +569,15 @@ onMounted(async () => {
   font-weight: 700;
   color: #0f172a;
 }
+.scard-rename {
+  flex-shrink: 0;
+  margin-left: -4px;
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+.scard-rename:hover { opacity: 1; }
+.scard:hover .scard-rename { opacity: 1; }
+.scard-name-row > .scard-rename + * { margin-left: auto; }
 .tag-text {
   margin-left: 2px;
   white-space: nowrap;
@@ -529,32 +625,78 @@ onMounted(async () => {
   margin-left: 1px;
 }
 
-/* ----------------- Stats grid ----------------- */
+/* ----------------- Stats grid -----------------
+   每个 stat-item 拆为 [tag][name][value] 三行；
+   父级 grid 用固定行高让相邻 item 的对应行严格横向对齐；
+   tag/name 用 <wbr/> 控制只在两字处断行（不会出现"负荷峰\n值"）。 */
 .scard-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: 6px 8px;
+  align-items: stretch;
 }
 .stat-item {
-  padding: 10px 12px;
+  display: grid;
+  /* 固定行高确保跨 item 横向对齐：tag 行 22 / name 行 36（两行） / value 行 22 */
+  grid-template-rows: 22px 36px 22px;
+  row-gap: 2px;
+  padding: 8px 6px;
   border-radius: 10px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
+  min-width: 0;
+  text-align: center;
+  /* 关闭字符级断行；仅在 <wbr/> 处可断 */
+  word-break: keep-all;
+  overflow-wrap: normal;
 }
-.stat-label {
+.stat-tag {
+  align-self: center;
+  justify-self: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  line-height: 1.1;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: #475569;
+  white-space: normal;
+  max-width: 100%;
+  text-align: center;
+}
+.stat-tag--cool { background: rgba(59, 130, 246, 0.12); color: #1d4ed8; }
+.stat-tag--heat { background: rgba(249, 115, 22, 0.12); color: #c2410c; }
+.stat-tag--sys  { background: rgba(99, 102, 241, 0.12); color: #4f46e5; }
+.stat-name {
+  align-self: center;
   font-size: 12px;
   color: #64748b;
-  margin-bottom: 4px;
-  white-space: nowrap;
+  line-height: 1.2;
+  white-space: normal;
+  /* 最多 2 行（行高 14.4 × 2 ≈ 29，留 36 容错） */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-align: center;
 }
 .stat-value {
+  align-self: center;
   font-size: 16px;
   font-weight: 700;
   color: #0f172a;
   font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 2px;
+  white-space: nowrap;
+  min-width: 0;
+  line-height: 1.1;
 }
+.stat-num { overflow: hidden; text-overflow: ellipsis; }
 .stat-unit {
   font-size: 11px;
   font-weight: 500;
@@ -599,5 +741,42 @@ onMounted(async () => {
   margin-top: 4px;
   color: #94a3b8;
   font-size: 12px;
+}
+
+/* ----------------- Mobile ----------------- */
+@media (max-width: 768px) {
+  .scheme-list-view { gap: 12px; padding-bottom: 84px; }
+  .scheme-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .scard { padding: 14px; gap: 10px; }
+  .scard-name { font-size: 16px; }
+  .scard-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 8px; }
+  .stat-item { padding: 6px 4px; }
+  .stat-tag { font-size: 10.5px; padding: 1px 5px; }
+  .stat-name { font-size: 11px; }
+  .stat-value { font-size: 14px; }
+  .scard-del { margin-left: auto; }
+
+  .mobile-action-bar {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    gap: 10px;
+    z-index: 90;
+    pointer-events: none;
+  }
+  .mobile-action-bar .mab-btn {
+    flex: 1;
+    pointer-events: auto;
+    height: 48px;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+  }
 }
 </style>

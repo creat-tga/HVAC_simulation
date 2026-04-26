@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, Delete } from '@element-plus/icons-vue'
+import { Plus, Delete, Setting } from '@element-plus/icons-vue'
 import EquipmentPicker from './EquipmentPicker.vue'
+import { randomUUID } from '@/utils/uuid'
 import type { EquipmentBrief, SubsystemDerived, SchemeTowerGroup, ValidationIssue } from '@/types/system-scheme'
 
 const { t } = useI18n()
@@ -35,7 +36,7 @@ function add() {
     ...groups.value,
     // Pre-assign a stable client-side id so validation issues from
     // /validate-payload can map back to this exact row.
-    { id: crypto.randomUUID(), group_index: groups.value.length + 1, tower_model_id: null, count: 1, factor: 0.85 },
+    { id: randomUUID(), group_index: groups.value.length + 1, tower_model_id: null, count: 1, factor: 0.85 },
   ]
 }
 function remove(i: number) {
@@ -109,10 +110,10 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
       <div class="tower-head">
         <span>{{ t('scheme.tower.title') }}</span>
         <div class="tower-head-actions">
-          <el-button size="small" @click="openFactorDialog">
+          <el-button text size="small" :icon="Setting" @click="openFactorDialog">
             {{ t('scheme.combo.factorDialogBtn') }}
           </el-button>
-          <el-button type="primary" :icon="Plus" size="small" @click="add" :disabled="groups.length >= 10">
+          <el-button plain :icon="Plus" size="small" @click="add" :disabled="groups.length >= 10">
             {{ t('scheme.tower.add') }}
           </el-button>
         </div>
@@ -181,7 +182,7 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
           {{ requiredFlow.toFixed(1) }} m³/h
         </el-descriptions-item>
         <el-descriptions-item :label="t('scheme.tower.flowSupply')">
-          <span :style="{ color: Math.abs(supplyFlow - requiredFlow) / Math.max(requiredFlow, 1) > 0.1 ? '#f56c6c' : '#67c23a' }">
+          <span :style="{ color: Math.abs(supplyFlow - requiredFlow) / Math.max(requiredFlow, 1) > 0.1 ? 'var(--color-danger)' : 'var(--color-success)' }">
             {{ supplyFlow.toFixed(1) }} m³/h
           </span>
         </el-descriptions-item>
@@ -217,20 +218,20 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
 </template>
 
 <style scoped>
-.tower-card { border-radius: 12px; }
+.tower-card { border-radius: var(--radius-lg); }
 .tower-head { display: flex; justify-content: space-between; align-items: center; }
 .tower-head-actions { display: flex; align-items: center; gap: 6px; }
 .tower-row { padding: 8px 0; }
 .tower-row :deep(.el-input-number) { width: 100%; }
 .tower-row :deep(.el-input) { width: 100%; }
 .tower-summary { margin-top: 8px; }
-.tower-factor-tip { color: #94a3b8; font-size: 12px; margin-top: -4px; }
+.tower-factor-tip { color: var(--text-muted); font-size: var(--font-size-xs); margin-top: -4px; }
 .eq-detail {
   margin-top: 4px;
   padding: 2px 0;
-  font-size: 12px;
-  color: #64748b;
-  line-height: 1.5;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: var(--line-height-normal);
   display: flex;
   flex-wrap: wrap;
   gap: 2px 8px;
@@ -238,11 +239,11 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
 .eq-detail span { white-space: nowrap; }
 .eq-detail span:not(:last-child)::after {
   content: '·';
-  color: #cbd5e1;
+  color: var(--border-base);
   margin-left: 8px;
 }
 .eq-detail--warm span { color: #c2410c; }
-.tower-row.has-error { background: #fef2f2; border-radius: 8px; padding: 6px 8px; }
+.tower-row.has-error { background: var(--color-danger-soft); border-radius: var(--radius-md); padding: 6px 8px; }
 .tower-issue { margin: 8px 0; }
 .device-table { margin: 4px 0 12px 0; }
 .device-table :deep(.el-descriptions__label) { width: 110px; }

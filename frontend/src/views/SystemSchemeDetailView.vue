@@ -11,9 +11,12 @@ import { computed, nextTick, onMounted, onBeforeUnmount, reactive, ref, watch } 
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Plus, Check, Setting, Delete, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
+import { useVirtualizer } from '@tanstack/vue-virtual'
+import { ArrowLeft, Plus, Check, Setting, Delete, ArrowDown, ArrowRight, FolderChecked } from '@element-plus/icons-vue'
+import { randomUUID } from '@/utils/uuid'
 import { getBuilding } from '@/api/buildings'
 import { useSystemSchemeStore } from '@/stores/system-scheme'
+import { useResponsive } from '@/composables/useResponsive'
 import SubsystemEditor from '@/components/scheme/SubsystemEditor.vue'
 import ControlStrategyEditor from '@/components/scheme/ControlStrategyEditor.vue'
 import type { Building } from '@/types/building'
@@ -30,6 +33,7 @@ const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const store = useSystemSchemeStore()
+const { isMobile } = useResponsive()
 
 const projectId = computed(() => route.params.projectId as string)
 const schemeId = computed(() => route.params.schemeId as string)
@@ -133,6 +137,14 @@ async function gotoStep(key: 'selection' | 'strategy' | 'diagram') {
       return
     }
     revertStep(wizardStep.value)
+    // 用户放弃当前 step 的脏改动 → 取消挂起的 dry-run 校验，
+    // 并清空 store.validation（它可能仍持有基于脏值的 issues），
+    // 否则切回该 step 时会显示已被还原数据的过期错误提示。
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer)
+      autoSaveTimer = null
+    }
+    store.validation = null
   }
   wizardStep.value = key
 }
@@ -185,12 +197,6 @@ function syncFromStore() {
 }
 
 watch(() => store.activeScheme?.id, syncFromStore)
-
-function onNameBlur() {
-  if (!local.name.trim()) {
-    local.name = store.activeScheme?.name?.trim() || `${t('scheme.namePlaceholder')}`
-  }
-}
 
 // ---- 实时校验与脱水状态跟踪（不再自动保存） ----
 // 以前这里会在 700ms 间隔后静默执行 store.save，导致
@@ -295,6 +301,54 @@ function collapseAllSubs() {
   expandedSubs.value = new Set()
 }
 
+// ============== Subsystem-level windowed virtualization ==============
+// 共享 .ws-content 滚动容器，仅渲染当前可见的子系统块；折叠/展开切换会
+// 改变项高度，需要 measureElement + watch expandedSubs 重新测量。
+const subStackRef = ref<HTMLElement | null>(null)
+const subScrollParent = ref<HTMLElement | null>(null)
+
+function findSubScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let cur: HTMLElement | null = el
+  while (cur) {
+    if (cur.classList && cur.classList.contains('ws-content')) return cur
+    cur = cur.parentElement
+  }
+  return document.documentElement
+}
+
+const subVirtualizer = useVirtualizer(
+  computed(() => ({
+    count: local.subsystems.length,
+    getScrollElement: () => subScrollParent.value,
+    // 折叠态 ~50px，展开态 600~1500px：用展开比例做加权估算
+    estimateSize: (idx: number) => {
+      const sub = local.subsystems[idx]
+      if (!sub) return 60
+      return isSubExpanded(sub, idx) ? 800 : 60
+    },
+    overscan: 1,
+    measureElement: (el: Element) => el.getBoundingClientRect().height,
+    getItemKey: (idx: number) => local.subsystems[idx]?.id || `sub-${idx}`,
+  })),
+)
+
+onMounted(() => {
+  void nextTick(() => {
+    subScrollParent.value = findSubScrollParent(subStackRef.value)
+  })
+})
+
+// 折叠/展开变化或子系统数量变化都需重新测量
+watch(
+  [() => local.subsystems.length, expandedSubs],
+  () => {
+    void nextTick(() => {
+      subVirtualizer.value.measure()
+    })
+  },
+  { deep: true },
+)
+
 function toggleSelectMode() {
   selectMode.value = !selectMode.value
   if (!selectMode.value) selectedIdx.value = new Set()
@@ -344,12 +398,12 @@ function defaultDesignParams(typ: SubsystemType): Record<string, unknown> {
 function confirmAddSub() {
   const idx = local.subsystems.length + 1
   const name = newSubName.value.trim() || `${t('scheme.types.' + newSubType.value)} ${idx}`
-  const newId = crypto.randomUUID()
+  const newId = randomUUID()
   // 默认创建一个组合：冷机 + 冷冻水泵 + 冷却水泵（chiller_plant）/
   // 风冷模块 + 水泵（air_cooled）。结构与 ComboEditor.addCombo 中保持一致，
   // 避免子系统创建后空白无组合。
   const defaultCombo = {
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     combo_index: 1,
     primary_model_id: null,
     primary_count: 1,
@@ -377,7 +431,7 @@ function confirmAddSub() {
     design_params: defaultDesignParams(newSubType.value),
     combos: [defaultCombo],
     tower_groups: newSubType.value === 'chiller_plant'
-      ? [{ id: crypto.randomUUID(), group_index: 1, tower_model_id: null, count: 1, factor: 0.85 }]
+      ? [{ id: randomUUID(), group_index: 1, tower_model_id: null, count: 1, factor: 0.85 }]
       : [],
   })
   activeSubIdx.value = local.subsystems.length - 1
@@ -503,7 +557,7 @@ async function save() {
       await store.save(schemeId.value, payload)
       syncFromStore()
       const rep = await store.validateActive(schemeId.value)
-      ElMessage.success(t('common.saved'))
+      ElMessage.success({ message: t('common.saved'), duration: 1200 })
       if (rep.issues.length) {
         const warns = rep.issues.filter((i) => i.severity === 'warning')
         if (warns.length) {
@@ -525,7 +579,7 @@ async function save() {
       await store.save(schemeId.value, payload)
       syncFromStore()
       const rep = await store.validateStrategyActive(schemeId.value)
-      ElMessage.success(t('common.saved'))
+      ElMessage.success({ message: t('common.saved'), duration: 1200 })
       if (rep.issues.length) {
         const warns = rep.issues.filter((i) => i.severity === 'warning')
         if (warns.length) {
@@ -571,11 +625,18 @@ onBeforeRouteLeave(async (_to, _from, next) => {
 
 onMounted(async () => {
   window.addEventListener('beforeunload', beforeUnload)
-  // 让滚动只发生在 ssd-body 内：限制父容器 .ws-content 不滚动
-  const wsContent = document.querySelector('.ws-content') as HTMLElement | null
-  if (wsContent) {
-    wsContent.dataset.prevOverflow = wsContent.style.overflow
-    wsContent.style.overflow = 'hidden'
+  // 桌面端：锁外层滚动，让内部 .ssd-body 独立滚动，
+  // 保留顶部步骤条常驻。
+  // 移动端：不锁，改为整个页面自然滚动。
+  // 原因：移动端子系统多时 reactive Proxy 创建 + 深拷贝可
+  // 能阻塞主线程，且嵌套滚动容器在手机上容易丢触摸
+  // 事件产生“卡住”。
+  if (!isMobile.value) {
+    const wsContent = document.querySelector('.ws-content') as HTMLElement | null
+    if (wsContent) {
+      wsContent.dataset.prevOverflow = wsContent.style.overflow
+      wsContent.style.overflow = 'hidden'
+    }
   }
   await store.fetchDetail(schemeId.value)
   // 先用 scheme 数据立即渲染页面（设备选型不依赖 building 详情）
@@ -593,6 +654,14 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload)
+  // 取消 pending 的 debounced 校验，避免路由切换后 timer 触发
+  // 把基于「未保存的脏值」的 issues 写回 store，造成下次进入页面残留旧错误。
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer)
+    autoSaveTimer = null
+  }
+  // 主动清理 store 中由 dry-run 校验留下的 issues。
+  store.validation = null
   const wsContent = document.querySelector('.ws-content') as HTMLElement | null
   if (wsContent) {
     wsContent.style.overflow = wsContent.dataset.prevOverflow || ''
@@ -613,42 +682,72 @@ const capacityShortMessage = computed(() => {
 </script>
 
 <template>
-  <div v-loading="store.loadingDetail" class="ssd-page">
-    <!-- ============== TOP BAR (single row: back + name + steps + save) ============== -->
-    <div class="ssd-topbar">
-      <el-button link :icon="ArrowLeft" @click="goBackToList" class="topbar-back">
-        {{ t('scheme.backToList') }}
-      </el-button>
-      <el-divider direction="vertical" />
-      <el-input
-        v-model="local.name"
-        class="topbar-name"
-        :class="{ 'is-empty-error': !local.name.trim() }"
-        :placeholder="t('scheme.namePlaceholder')"
-        size="default"
-        @blur="onNameBlur"
-      />
+  <div v-loading="store.loadingDetail && !store.activeScheme" class="ssd-page">
+    <!-- ============== MOBILE TOPBAR：teleport 到 layout 中、位于 .ws-content 之外，真正不滚动 ============== -->
+    <Teleport v-if="isMobile" to="#ws-mobile-topbar-slot" defer>
+      <div class="ssd-mobile-topbar">
+        <button class="ssd-mb-back" :aria-label="t('workspace.backToProjects') || '返回'" @click="goBackToList">
+          <el-icon :size="20"><ArrowLeft /></el-icon>
+        </button>
+        <div class="ssd-mb-seg" role="tablist">
+          <button
+            v-for="(s, i) in STEPS"
+            :key="s.key"
+            type="button"
+            role="tab"
+            :aria-selected="wizardStep === s.key"
+            class="ssd-mb-seg-btn"
+            :class="{ active: wizardStep === s.key }"
+            @click="gotoStep(s.key)"
+          >
+            <span class="ssd-mb-seg-num">{{ i + 1 }}</span>
+            <span class="ssd-mb-seg-label">{{ t(s.titleKey) }}</span>
+          </button>
+        </div>
+        <el-badge is-dot :hidden="!store.dirty" type="danger" class="ssd-mb-save-badge">
+          <button
+            class="ssd-mb-save"
+            :disabled="saving"
+            :aria-label="t('common.save')"
+            @click="save"
+          >
+            <el-icon v-if="!saving" :size="16"><FolderChecked /></el-icon>
+            <el-icon v-else :size="16" class="is-loading"><Setting /></el-icon>
+          </button>
+        </el-badge>
+      </div>
+    </Teleport>
+
+    <!-- ============== TOP BAR (desktop only: name readonly + steps + save) ============== -->
+    <div v-if="!isMobile" class="ssd-topbar">
+      <div class="topbar-name-readonly" :title="local.name">{{ local.name || t('scheme.namePlaceholder') }}</div>
       <div class="topbar-steps">
-        <div
+        <el-tooltip
           v-for="(s, i) in STEPS"
           :key="s.key"
-          class="stepitem"
-          :class="{
-            active: wizardStep === s.key,
-            done: stepIdx > i,
-            pending: stepIdx < i,
-          }"
-          @click="gotoStep(s.key)"
+          :content="t(s.titleKey)"
+          placement="bottom"
+          :show-after="200"
         >
-          <div class="step-circle">
-            <span v-if="stepIdx > i">✓</span>
-            <span v-else>{{ i + 1 }}</span>
+          <div
+            class="stepitem"
+            :class="{
+              active: wizardStep === s.key,
+              done: stepIdx > i,
+              pending: stepIdx < i,
+            }"
+            @click="gotoStep(s.key)"
+          >
+            <div class="step-circle">
+              <el-icon v-if="stepIdx > i"><Check /></el-icon>
+              <span v-else>{{ i + 1 }}</span>
+            </div>
+            <div class="step-title">{{ t(s.titleKey) }}</div>
           </div>
-          <div class="step-title">{{ t(s.titleKey) }}</div>
-        </div>
+        </el-tooltip>
       </div>
       <el-badge is-dot :hidden="!store.dirty" type="danger" class="topbar-save">
-        <el-button type="primary" :icon="Check" :loading="saving" @click="save" size="default">
+        <el-button type="primary" :icon="FolderChecked" :loading="saving" @click="save" size="default">
           {{ t('common.save') }}
         </el-button>
       </el-badge>
@@ -663,13 +762,13 @@ const capacityShortMessage = computed(() => {
           <div class="sel-kpi-group" :class="{ 'sel-kpi--short': coolingShort }">
             <span class="sel-kpi-tag sel-kpi-tag--cool">{{ t('scheme.summary.cooling') || '制冷' }}</span>
             <span class="sel-kpi-pair">
-              <span class="sel-kpi-label">{{ t('scheme.summary.loadPeakShort') || '负荷峰值' }}</span>
+              <span class="sel-kpi-label"><span class="kw">负荷</span><span class="kw">峰值</span></span>
               <span class="sel-kpi-val">{{ store.summary?.cooling_load_peak !== null && store.summary?.cooling_load_peak !== undefined ? store.summary.cooling_load_peak.toFixed(1) : '-' }}</span>
               <span class="sel-kpi-unit">kW</span>
             </span>
             <span class="sel-kpi-sep">/</span>
             <span class="sel-kpi-pair">
-              <span class="sel-kpi-label">{{ t('scheme.summary.installedShort') || '装机' }}</span>
+              <span class="sel-kpi-label"><span class="kw">装机</span><span class="kw">容量</span></span>
               <span class="sel-kpi-val">{{ store.summary?.cooling_capacity_total?.toFixed(1) ?? '0.0' }}</span>
               <span class="sel-kpi-unit">kW</span>
             </span>
@@ -677,13 +776,13 @@ const capacityShortMessage = computed(() => {
           <div class="sel-kpi-group" :class="{ 'sel-kpi--short': heatingShort }">
             <span class="sel-kpi-tag sel-kpi-tag--heat">{{ t('scheme.summary.heating') || '制热' }}</span>
             <span class="sel-kpi-pair">
-              <span class="sel-kpi-label">{{ t('scheme.summary.loadPeakShort') || '负荷峰值' }}</span>
+              <span class="sel-kpi-label"><span class="kw">负荷</span><span class="kw">峰值</span></span>
               <span class="sel-kpi-val">{{ store.summary?.heating_load_peak !== null && store.summary?.heating_load_peak !== undefined ? store.summary.heating_load_peak.toFixed(1) : '-' }}</span>
               <span class="sel-kpi-unit">kW</span>
             </span>
             <span class="sel-kpi-sep">/</span>
             <span class="sel-kpi-pair">
-              <span class="sel-kpi-label">{{ t('scheme.summary.installedShort') || '装机' }}</span>
+              <span class="sel-kpi-label"><span class="kw">装机</span><span class="kw">容量</span></span>
               <span class="sel-kpi-val">{{ store.summary?.heating_capacity_total?.toFixed(1) ?? '0.0' }}</span>
               <span class="sel-kpi-unit">kW</span>
             </span>
@@ -750,46 +849,63 @@ const capacityShortMessage = computed(() => {
 
         <div v-if="!local.subsystems.length" class="empty-sub">
           <el-empty :description="t('scheme.noSubsystem')">
-            <el-button type="primary" :icon="Plus" @click="openAddSub">
+            <el-button plain :icon="Plus" @click="openAddSub">
               {{ t('scheme.addSubsystem') }}
             </el-button>
           </el-empty>
         </div>
 
-        <!-- Vertical stack of subsystems -->
-        <div v-else class="sub-stack">
+        <!-- Vertical stack of subsystems (virtualized) -->
+        <div
+          v-else
+          ref="subStackRef"
+          class="sub-stack"
+          :style="{ position: 'relative', height: `${subVirtualizer.getTotalSize()}px`, width: '100%' }"
+        >
           <div
-            v-for="(sub, idx) in local.subsystems"
-            :key="idx"
-            class="sub-block"
-            :class="{ 'sub-block--selected': selectMode && selectedIdx.has(idx), 'sub-block--collapsed': !isSubExpanded(sub, idx) }"
+            v-for="vi in subVirtualizer.getVirtualItems()"
+            :key="String(vi.key)"
+            :ref="(el) => { if (el) subVirtualizer.measureElement(el as HTMLElement) }"
+            :data-index="vi.index"
+            :style="{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              transform: `translateY(${vi.start}px)`,
+            }"
           >
+            <template v-if="local.subsystems[vi.index]">
+            <div
+              class="sub-block"
+              :class="{ 'sub-block--selected': selectMode && selectedIdx.has(vi.index), 'sub-block--collapsed': !isSubExpanded(local.subsystems[vi.index], vi.index) }"
+            >
             <div class="sub-block-head">
               <div class="sub-block-head-left">
                 <el-checkbox
                   v-if="selectMode"
-                  :model-value="selectedIdx.has(idx)"
-                  @change="toggleSelect(idx)"
+                  :model-value="selectedIdx.has(vi.index)"
+                  @change="toggleSelect(vi.index)"
                 />
                 <el-button
                   size="small"
                   text
-                  :icon="isSubExpanded(sub, idx) ? ArrowDown : ArrowRight"
+                  :icon="isSubExpanded(local.subsystems[vi.index], vi.index) ? ArrowDown : ArrowRight"
                   class="sub-toggle-btn"
-                  @click="toggleSubExpanded(sub, idx)"
+                  @click="toggleSubExpanded(local.subsystems[vi.index], vi.index)"
                 />
-                <span class="sub-idx">#{{ idx + 1 }}</span>
+                <span class="sub-idx">#{{ vi.index + 1 }}</span>
                 <el-input
-                  v-model="sub.name"
+                  v-model="local.subsystems[vi.index].name"
                   size="small"
                   class="sub-name-input"
                   :placeholder="t('scheme.subNamePlaceholder')"
                 />
                 <el-tag size="small" type="info" effect="plain">
-                  {{ t('scheme.types.' + sub.subsystem_type) }}
+                  {{ t('scheme.types.' + local.subsystems[vi.index].subsystem_type) }}
                 </el-tag>
-                <span v-if="!isSubExpanded(sub, idx)" class="sub-collapsed-info">
-                  <template v-for="d in [store.derived?.subsystems?.find(x => x.id === sub.id)]" :key="d?.id || idx">
+                <span v-if="!isSubExpanded(local.subsystems[vi.index], vi.index)" class="sub-collapsed-info">
+                  <template v-for="d in [store.derived?.subsystems?.find(x => x.id === local.subsystems[vi.index].id)]" :key="d?.id || vi.index">
                     <template v-if="d?.cooling_capacity_total">
                       · 制冷量 {{ d.cooling_capacity_total }} kW
                     </template>
@@ -806,7 +922,7 @@ const capacityShortMessage = computed(() => {
                   text
                   :icon="Delete"
                   :disabled="local.subsystems.length <= 1"
-                  @click="removeSub(idx)"
+                  @click="removeSub(vi.index)"
                 >
                   {{ t('common.delete') }}
                 </el-button>
@@ -814,21 +930,23 @@ const capacityShortMessage = computed(() => {
             </div>
 
             <SubsystemEditor
-              v-if="isSubMounted(sub, idx)"
-              v-show="isSubExpanded(sub, idx)"
-              v-model="local.subsystems[idx]"
-              :derived="store.derived?.subsystems.find((d) => d.id === sub.id) || null"
-              :issues="visibleIssues.filter((iss) => iss.subsystem_id === sub.id)"
+              v-if="isSubMounted(local.subsystems[vi.index], vi.index)"
+              v-show="isSubExpanded(local.subsystems[vi.index], vi.index)"
+              v-model="local.subsystems[vi.index]"
+              :derived="store.derived?.subsystems.find((d) => d.id === local.subsystems[vi.index].id) || null"
+              :issues="visibleIssues.filter((iss) => iss.subsystem_id === local.subsystems[vi.index].id)"
             />
             <!-- 首次展开的过渡骨架：mountedSubs 翻 true 之前先展示，
                  让用户立即看到反馈，避免 1+ s 的"按了没反应"错觉。 -->
             <div
-              v-else-if="isSubExpanded(sub, idx)"
+              v-else-if="isSubExpanded(local.subsystems[vi.index], vi.index)"
               class="sub-skeleton"
             >
               <el-skeleton :rows="3" animated />
               <el-skeleton :rows="6" animated style="margin-top: 12px" />
             </div>
+            </div>
+            </template>
           </div>
         </div>
 
@@ -881,7 +999,7 @@ const capacityShortMessage = computed(() => {
 
 <style scoped>
 .ssd-page {
-  padding: 4px 6px;
+  padding: 0;
   max-width: none;
   margin: 0;
   height: 100%;
@@ -898,21 +1016,23 @@ const capacityShortMessage = computed(() => {
   gap: 10px;
   padding: 6px 12px;
   background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
   margin-bottom: 6px;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  box-shadow: var(--shadow-sm);
   flex-wrap: nowrap;
   min-width: 0;
 }
-.topbar-back { flex-shrink: 0; }
-.topbar-name {
-  flex: 0 0 160px;
-  width: 160px;
-}
-.topbar-name.is-empty-error :deep(.el-input__wrapper) {
-  box-shadow: 0 0 0 1px #f56c6c inset;
-  background: #fef2f2;
+.topbar-name-readonly {
+  flex: 0 0 auto;
+  max-width: 220px;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 4px;
 }
 .topbar-steps {
   display: flex;
@@ -932,13 +1052,13 @@ const capacityShortMessage = computed(() => {
   padding: 4px 12px 4px 4px;
   cursor: pointer;
   user-select: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transition: background 0.18s;
   flex-shrink: 0;
 }
-.stepitem:hover { background: #f1f5f9; }
+.stepitem:hover { background: var(--color-neutral-100); }
 .stepitem.active {
-  background: linear-gradient(135deg, #ecfeff 0%, #f5f3ff 100%);
+  background: var(--brand-primary-soft);
 }
 .step-circle {
   width: 24px;
@@ -947,43 +1067,55 @@ const capacityShortMessage = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  font-size: 12px;
-  background: #f1f5f9;
-  color: #94a3b8;
-  border: 2px solid #e2e8f0;
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-xs);
+  background: var(--color-neutral-100);
+  color: var(--text-muted);
+  border: 2px solid var(--border-subtle);
   flex-shrink: 0;
   transition: all 0.18s;
 }
 .stepitem.active .step-circle {
-  background: linear-gradient(135deg, #06b6d4, #8b5cf6);
-  color: #fff;
+  background: var(--brand-primary-gradient);
+  color: var(--text-on-brand);
   border-color: transparent;
-  box-shadow: 0 2px 6px rgba(139, 92, 246, 0.28);
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.28);
 }
 .stepitem.done .step-circle {
-  background: #10b981;
-  color: #fff;
+  background: var(--color-success);
+  color: var(--text-on-brand);
   border-color: transparent;
 }
 .step-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #0f172a;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
   line-height: 1.2;
   white-space: nowrap;
 }
 .stepitem.pending .step-title {
-  color: #64748b;
-  font-weight: 500;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
 }
 @media (max-width: 900px) {
-  .topbar-steps .step-title { display: none; }
-  .topbar-name { flex: 0 0 120px; width: 120px; }
+  /* T-1+T-2: 小屏下顶栏换行，步骤条独立铺满第二行，文字完整保留。 */
+  .ssd-topbar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .topbar-steps {
+    order: 10;
+    flex-basis: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-top: 4px;
+    border-top: 1px dashed var(--border-subtle);
+  }
+  .topbar-name-readonly { flex: 1 1 auto; min-width: 0; max-width: none; }
 }
 
 .ssd-body {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-subtle);
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -1014,9 +1146,9 @@ const capacityShortMessage = computed(() => {
   width: 100%;
 }
 .ssd-body :deep(.el-form-item__label) {
-  font-size: 13px;
-  color: #475569;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-600);
+  font-weight: var(--font-weight-medium);
   padding-bottom: 4px !important;
   line-height: 1.3;
 }
@@ -1033,14 +1165,20 @@ const capacityShortMessage = computed(() => {
 }
 .sel-kpi-group {
   flex: 1 1 320px;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
-  border-radius: 10px;
+  /* flex-wrap: wrap;          /* 允许整体在窄屏换行 */
+  row-gap: 4px;
+  column-gap: 8px;
+  padding: 6px 6px;
+  border-radius: var(--radius-md);
   background: linear-gradient(135deg, #f0f9ff 0%, #f5f3ff 100%);
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-subtle);
   min-height: 36px;
+  /* 中文不按字符断；只在标签的两字之间允许断 */
+  word-break: keep-all;
+  overflow-wrap: normal;
+  line-height: 1.2;
 }
 .sel-kpi--short {
   border-color: #fcd34d;
@@ -1049,39 +1187,61 @@ const capacityShortMessage = computed(() => {
 .sel-kpi-tag {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
+  justify-content: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: #fff;
   flex-shrink: 0;
+  line-height: 1;
+  white-space: nowrap;
 }
 .sel-kpi-tag--cool { background: linear-gradient(135deg, #06b6d4, #0ea5e9); }
-.sel-kpi-tag--heat { background: linear-gradient(135deg, #f97316, #ef4444); }
+.sel-kpi-tag--heat { background: linear-gradient(135deg, #f97316, var(--color-danger)); }
 .sel-kpi-pair {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 4px;
+  line-height: 1.2;
+  /* pair 内允许在 .sel-kpi-label 内的两字之间换行 */
+  flex-wrap: wrap;
+  row-gap: 2px;
 }
 .sel-kpi-label {
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: 1.2;
+  /* 关键：只允许在子元素 .kw 之间断行，每个 .kw 内部不断 */
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
+.sel-kpi-label .kw {
+  display: inline-block;
+  white-space: nowrap;
 }
 .sel-kpi-val {
-  font-size: 16px;
-  font-weight: 700;
-  color: #0f172a;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  line-height: 1.2;
 }
 .sel-kpi--short .sel-kpi-val { color: #b45309; }
 .sel-kpi-unit {
   font-size: 11px;
-  font-weight: 500;
-  color: #94a3b8;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-muted);
+  white-space: nowrap;
+  line-height: 1.2;
 }
 .sel-kpi-sep {
-  color: #cbd5e1;
-  font-size: 14px;
+  color: var(--border-base);
+  font-size: var(--font-size-base);
+  flex-shrink: 0;
+  line-height: 1.2;
 }
 .sel-cap-alert {
   margin-bottom: 10px;
@@ -1090,13 +1250,140 @@ const capacityShortMessage = computed(() => {
 @media (max-width: 640px) {
   .sel-kpi-group { flex: 1 1 100%; }
 }
+
+/* 移动端：禁用嵌套滚动，改由外层 .ws-content 整体滚动；
+   避免大量子系统/组合首挂载时主线程阻塞 + 嵌套滚动卡死。 */
+@media (max-width: 768px) {
+  .ssd-page {
+    height: auto;
+    min-height: 100%;
+    /* sticky 顶栏 + 内容自然排列，不需要 padding-top 占位 */
+    padding: 0 4px 12px;
+  }
+  .ssd-body {
+    overflow: visible;
+    flex: 0 0 auto;
+    min-height: 0;
+    border-radius: 8px;
+  }
+}
+
+/* ============== MOBILE TOPBAR (Teleport 到 .ws-main 内、.ws-content 之外，
+   作为普通 flex 项显示在顶部，与外层 TopActionBar 同级，自然"固定"在上方) ============== */
+.ssd-mobile-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 与 TopActionBar.top-bar--mobile 完全一致：透明背景、无边框 */
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  min-height: 44px;
+  flex-shrink: 0;
+}
+.ssd-mb-back {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-body, #1e293b);
+  border-radius: 999px;
+  -webkit-tap-highlight-color: transparent;
+}
+.ssd-mb-back:active { background: rgba(15, 23, 42, 0.06); }
+.ssd-mb-seg {
+  flex: 1 1 auto;
+  display: inline-flex;
+  background: rgba(15, 23, 42, 0.06);
+  border-radius: 10px;
+  padding: 2px;
+  gap: 2px;
+  min-width: 0;
+}
+.ssd-mb-seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 4px;
+  font-size: 12px;
+  color: var(--text-muted, #64748b);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.18s, color 0.18s;
+}
+.ssd-mb-seg-btn.active {
+  background: #ffffff;
+  color: var(--text-primary, #0f172a);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.ssd-mb-seg-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.1);
+  color: inherit;
+  flex-shrink: 0;
+}
+.ssd-mb-seg-btn.active .ssd-mb-seg-num {
+  background: var(--brand-primary, #6366f1);
+  color: #fff;
+}
+.ssd-mb-seg-label {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ssd-mb-save-badge { flex: 0 0 auto; }
+.ssd-mb-save {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--brand-primary, #6366f1);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.3);
+}
+.ssd-mb-save:disabled { opacity: 0.6; }
+.ssd-mb-save .is-loading {
+  animation: ssd-spin 1s linear infinite;
+}
+@keyframes ssd-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+/* 极窄屏隐藏文字标签，仅显示数字圆圈 */
+@media (max-width: 360px) {
+  .ssd-mb-seg-label { display: none; }
+}
 .sub-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   padding: 4px 4px 12px;
-  border-bottom: 1px dashed #e2e8f0;
+  border-bottom: 1px dashed var(--border-subtle);
   margin-bottom: 14px;
   flex-wrap: wrap;
 }
@@ -1106,13 +1393,13 @@ const capacityShortMessage = computed(() => {
   gap: 10px;
 }
 .sub-count {
-  font-size: 13px;
-  color: #475569;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-600);
+  font-weight: var(--font-weight-semibold);
 }
 .sub-count-cap {
-  color: #94a3b8;
-  font-weight: 500;
+  color: var(--text-muted);
+  font-weight: var(--font-weight-medium);
 }
 .sub-toolbar-right {
   display: flex;
@@ -1124,14 +1411,14 @@ const capacityShortMessage = computed(() => {
   gap: 14px;
 }
 .sub-block {
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
   background: #fff;
   padding: 14px 16px;
   transition: border-color 0.18s, box-shadow 0.18s;
 }
 .sub-block:hover {
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  box-shadow: var(--shadow-md);
 }
 .sub-skeleton {
   margin-top: 12px;
@@ -1148,7 +1435,7 @@ const capacityShortMessage = computed(() => {
   gap: 10px;
   padding-bottom: 10px;
   margin-bottom: 12px;
-  border-bottom: 1px dashed #e2e8f0;
+  border-bottom: 1px dashed var(--border-subtle);
   flex-wrap: wrap;
 }
 .sub-block-head-left {
@@ -1159,16 +1446,41 @@ const capacityShortMessage = computed(() => {
   flex: 1;
 }
 .sub-idx {
-  background: #e0e7ff;
-  color: #4338ca;
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary-active);
   padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 700;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
   font-variant-numeric: tabular-nums;
 }
 .sub-name-input {
   max-width: 260px;
+  min-width: 0;
+}
+.sub-collapsed-info {
+  /* \u5b50\u7cfb\u7edf\u6298\u53e0\u6001\u8f7b\u91cf\u4fe1\u606f\uff0c\u5f3a\u5236\u4e0d\u6362\u884c\uff0c\u8fc7\u957f\u7701\u7565\u3002 */
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+@media (max-width: 1024px) {
+  /* \u4e2d\u7b49\u5bbd\u5ea6\uff08\u5e73\u677f/\u5206\u5c4f\uff09\u4e0b\uff0chead-left \u5141\u8bb8\u6362\u884c\uff0ccollapsed-info \u72ec\u5360\u4e00\u884c */
+  .sub-block-head-left { flex-wrap: wrap; }
+  .sub-name-input { max-width: none; flex: 1 1 160px; }
+  .sub-collapsed-info {
+    flex-basis: 100%;
+    max-width: 100%;
+    margin-top: 4px;
+  }
+}
+@media (max-width: 480px) {
+  /* \u6781\u5c0f\u5c4f\u9690\u85cf\uff0c\u907f\u514d\u65e0\u610f\u4e49\u5360\u4f4d */
+  .sub-collapsed-info { display: none; }
 }
 .empty-sub {
   padding: 24px 0;
@@ -1178,7 +1490,7 @@ const capacityShortMessage = computed(() => {
 }
 .issues-card :deep(.el-card__header) {
   padding: 10px 14px;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 .issues-head {
   display: flex;

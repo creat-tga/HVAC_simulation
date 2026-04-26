@@ -11,6 +11,9 @@ importers:
       '@element-plus/icons-vue':
         specifier: ^2.3.2
         version: 2.3.2(vue@3.5.30(typescript@5.9.3))
+      '@tanstack/vue-virtual':
+        specifier: ^3.13.24
+        version: 3.13.24(vue@3.5.30(typescript@5.9.3))
       axios:
         specifier: ^1.13.6
         version: 1.13.6
@@ -338,6 +341,14 @@ packages:
 
   '@sxzz/popperjs-es@2.11.8':
     resolution: {integrity: sha512-wOwESXvvED3S8xBmcPWHs2dUuzrE4XiZeFu7e1hROIJkm02a49N120pmOXxY33sBb6hArItm5W5tcg1cBtV+HQ==}
+
+  '@tanstack/virtual-core@3.14.0':
+    resolution: {integrity: sha512-JLANqGy/D6k4Ujmh8Tr25lGimuOXNiaVyXaCAZS0W+1390sADdGnyUdSWNIfd49gebtIxGMij4IktRVzrdr12Q==}
+
+  '@tanstack/vue-virtual@3.13.24':
+    resolution: {integrity: sha512-A0k2qF0zFSUStXSZkGXABouXr2Tw2Ztl/cVIYG9qy84uR8W7UNjAcX3DvzBS3YnDcwvLxab8v7dbmYBZ39itDA==}
+    peerDependencies:
+      vue: ^2.7.0 || ^3.0.0
 
   '@tybys/wasm-util@0.10.1':
     resolution: {integrity: sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg==}
@@ -1250,6 +1261,13 @@ snapshots:
   '@rolldown/pluginutils@1.0.0-rc.9': {}
 
   '@sxzz/popperjs-es@2.11.8': {}
+
+  '@tanstack/virtual-core@3.14.0': {}
+
+  '@tanstack/vue-virtual@3.13.24(vue@3.5.30(typescript@5.9.3))':
+    dependencies:
+      '@tanstack/virtual-core': 3.14.0
+      vue: 3.5.30(typescript@5.9.3)
 
   '@tybys/wasm-util@0.10.1':
     dependencies:

@@ -53,6 +53,8 @@ export const useSystemSchemeStore = defineStore('systemScheme', () => {
   // ---------------- list ----------------
   async function fetchList(projectId: string) {
     loadingList.value = true
+    // 清空上次项目级校验结果，避免列表页显示过期 issues
+    projectValidation.value = null
     try {
       const { data } = await listSchemes(projectId)
       items.value = data.sort((a, b) => a.scheme_index - b.scheme_index)
@@ -87,6 +89,11 @@ export const useSystemSchemeStore = defineStore('systemScheme', () => {
   // ---------------- detail ----------------
   async function fetchDetail(schemeId: string) {
     loadingDetail.value = true
+    // 清空上次遵从未保存 payload 校验的 issues：
+    // 否则用户修改后未保存切换页面重进后，
+    // activeScheme 已重拉为最后一次保存的数值，
+    // 但舊的 issues 仍会在置顶 / 子项高亮 / 保存拦截处出现。
+    validation.value = null
     try {
       const { data } = await getSchemeBundle(schemeId)
       activeScheme.value = data.scheme

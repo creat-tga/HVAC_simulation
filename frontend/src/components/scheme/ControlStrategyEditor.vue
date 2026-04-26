@@ -5,6 +5,7 @@ import { RefreshRight, Plus, Delete } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import ScheduleEditor from '@/components/building/ScheduleEditor.vue'
 import StrategyValueProfileEditor from './StrategyValueProfileEditor.vue'
+import { randomUUID } from '@/utils/uuid'
 import type { BuildingZone } from '@/types/building'
 import type {
   AirCooledStage,
@@ -664,7 +665,7 @@ function addStage(sub: Subsystem) {
     const emptyCounts = Object.fromEntries(sub.combos.filter((combo) => combo.id).map((combo) => [combo.id as string, 0]))
     if (next.subsystem_type === 'chiller_plant') {
       next.equipment.chiller_stages.push({
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         combo_counts: emptyCounts,
         loading_down: null,
         loading_up: null,
@@ -675,7 +676,7 @@ function addStage(sub: Subsystem) {
       next.equipment.chiller_stages = recalcChillerStages(sub, next.equipment.chiller_stages)
     } else if (next.subsystem_type === 'air_cooled') {
       next.equipment.module_stages.push({
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         combo_counts: emptyCounts,
         loading_down: null,
         loading_up: null,
@@ -710,7 +711,7 @@ function insertStageAt(sub: Subsystem, afterIdx: number) {
     const emptyCounts = Object.fromEntries(sub.combos.filter((combo) => combo.id).map((combo) => [combo.id as string, 0]))
     if (next.subsystem_type === 'chiller_plant') {
       next.equipment.chiller_stages.splice(afterIdx + 1, 0, {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         combo_counts: emptyCounts,
         loading_down: null,
         loading_up: null,
@@ -721,7 +722,7 @@ function insertStageAt(sub: Subsystem, afterIdx: number) {
       next.equipment.chiller_stages = recalcChillerStages(sub, next.equipment.chiller_stages)
     } else if (next.subsystem_type === 'air_cooled') {
       next.equipment.module_stages.splice(afterIdx + 1, 0, {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         combo_counts: emptyCounts,
         loading_down: null,
         loading_up: null,
@@ -1084,7 +1085,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
             <div class="sub-section">
               <div class="sub-section-head">
                 <div class="sub-section-title">{{ t('scheme.strategy.tabSchedule') }}</div>
-                <el-button size="small" type="primary" :icon="Plus" @click="addSchedule(sub)">{{ t('scheme.strategy.addSchedule') }}</el-button>
+                <el-button size="small" plain :icon="Plus" @click="addSchedule(sub)">{{ t('scheme.strategy.addSchedule') }}</el-button>
               </div>
               <el-alert
                 v-for="(issue, idx) in subsystemScheduleIssues(sub.id)"
@@ -1193,7 +1194,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                 <div class="sub-section-title">{{ t('scheme.strategy.tabEquipment') }}</div>
                 <div class="card-actions">
                   <el-button size="small" :icon="RefreshRight" @click="resetSubsystemStrategy(sub)">{{ t('scheme.strategy.autoGenerate') }}</el-button>
-                  <el-button size="small" type="primary" :icon="Plus" @click="addStage(sub)">{{ t('scheme.strategy.addStaging') }}</el-button>
+                  <el-button size="small" plain :icon="Plus" @click="addStage(sub)">{{ t('scheme.strategy.addStaging') }}</el-button>
                 </div>
               </div>
 
@@ -1444,13 +1445,13 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   gap: 14px;
 }
 .strategy-card {
-  border-radius: 14px;
-  border: 1px solid #e2e8f0;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
 }
 .card-title {
   font-size: 15px;
-  font-weight: 700;
-  color: #0f172a;
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
 }
 .card-head,
 .sub-section-head,
@@ -1470,8 +1471,8 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   gap: 8px;
 }
 .margin-desc {
-  color: #64748b;
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
 }
 .safety-margin-bar {
   display: flex;
@@ -1481,9 +1482,9 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   padding: 4px 0 8px;
 }
 .safety-margin-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #0f172a;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
   white-space: nowrap;
 }
 .safety-margin-bar :deep(.el-input-number) {
@@ -1505,8 +1506,8 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 .assign-card,
 .stage-card,
 .pump-card {
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
   padding: 12px;
   background: #fff;
 }
@@ -1517,25 +1518,25 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  font-size: 13px;
-  color: #334155;
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-700);
 }
 .group-setting-block {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px dashed #e2e8f0;
+  border-top: 1px dashed var(--border-subtle);
 }
 .group-setting-title,
 .assign-title,
 .sub-section-title,
 .pump-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: #0f172a;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
   margin-bottom: 8px;
 }
 .sub-section-title {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   padding-left: 10px;
   border-left: 3px solid #3b82f6;
   line-height: 1.2;
@@ -1544,23 +1545,23 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   margin-top: 14px;
 }
 .equip-block-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #475569;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-neutral-600);
   margin-bottom: 6px;
   padding-left: 8px;
-  border-left: 2px solid #cbd5e1;
+  border-left: 2px solid var(--border-base);
 }
 .pump-foot-hint {
   margin-top: 6px;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-muted);
   text-align: left;
 }
 .pump-hint {
   font-size: 11px;
-  font-weight: 400;
-  color: #94a3b8;
+  font-weight: var(--font-weight-regular);
+  color: var(--text-muted);
   margin-left: 8px;
 }
 .group-setting-row,
@@ -1573,21 +1574,21 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 }
 .group-total {
   margin-top: 8px;
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
 }
 .assign-grid {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   margin-top: 14px;
 }
 .assign-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: #0f172a;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
 }
 .assign-meta {
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
 }
 .sub-title-row {
   display: flex;
@@ -1616,8 +1617,8 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   overflow-x: auto;
   overflow-y: auto;
   max-height: 420px; /* 约 10 行： 36px 行高 × 10 + 表头 */
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
 }
 .st-table thead th {
   position: sticky;
@@ -1625,15 +1626,15 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   z-index: 1;
 }
 .st-table tbody td.is-zero :deep(.el-input-number .el-input__inner) {
-  color: #cbd5e1;
+  color: var(--border-base);
 }
 .st-table tbody td.is-zero :deep(.el-input-number .el-input__wrapper) {
-  background: #f8fafc;
-  box-shadow: 0 0 0 1px #f1f5f9 inset;
+  background: var(--color-neutral-50);
+  box-shadow: 0 0 0 1px var(--color-neutral-100) inset;
 }
 /* 选中时恢复正常样式以区别于禁用输入 */
 .st-table tbody td.is-zero:focus-within :deep(.el-input-number .el-input__inner) {
-  color: #1e293b;
+  color: var(--text-body);
 }
 .st-table tbody td.is-zero:focus-within :deep(.el-input-number .el-input__wrapper) {
   background: #ffffff;
@@ -1642,35 +1643,35 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 .st-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
-  color: #1e293b;
+  font-size: var(--font-size-sm);
+  color: var(--text-body);
 }
 .st-table thead th {
-  background: #f1f5f9;
-  font-weight: 600;
-  color: #0f172a;
+  background: var(--color-neutral-100);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
   padding: 8px 10px;
   text-align: center;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-subtle);
   white-space: nowrap;
 }
 .st-table tbody td {
   padding: 2px 5px;
   text-align: center;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--color-neutral-100);
   vertical-align: middle;
 }
 .st-table tbody tr:last-child td {
   border-bottom: 0;
 }
 .st-table tbody tr:hover {
-  background: #f8fafc;
+  background: var(--color-neutral-50);
 }
 .st-stage-col {
   width: 56px;
-  font-weight: 600;
-  color: #475569;
-  background: #f8fafc;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-neutral-600);
+  background: var(--color-neutral-50);
 }
 .st-num-col, .st-cap-col {
   min-width: 110px;
@@ -1690,18 +1691,18 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   align-items: center;
 }
 .st-combo-name {
-  font-weight: 600;
-  font-size: 13px;
-  color: #0f172a;
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
 }
 .st-combo-sub {
   font-size: 11px;
-  color: #64748b;
-  font-weight: 400;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-regular);
 }
 .st-cap-heat {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-muted);
   margin-top: 2px;
 }
 .st-table :deep(.el-input-number) {
@@ -1716,13 +1717,13 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 }
 .stage-combo-cell {
   padding: 8px;
-  border-radius: 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  border-radius: var(--radius-md);
+  background: var(--color-neutral-50);
+  border: 1px solid var(--border-subtle);
 }
 .stage-label {
-  font-size: 12px;
-  color: #475569;
+  font-size: var(--font-size-xs);
+  color: var(--color-neutral-600);
   margin-bottom: 6px;
 }
 .stage-range-row {
@@ -1739,8 +1740,8 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 .stage-capacity {
   display: flex;
   align-items: center;
-  font-size: 12px;
-  color: #475569;
+  font-size: var(--font-size-xs);
+  color: var(--color-neutral-600);
 }
 .pump-grid {
   display: grid;
@@ -1757,14 +1758,14 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   width: auto;
   border-collapse: collapse;
   margin-top: 8px;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
 }
 .pump-table thead th {
-  font-weight: 500;
-  color: #64748b;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
   padding: 4px 10px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 .pump-table tbody td {
   padding: 4px 10px;
@@ -1773,14 +1774,14 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 }
 .pump-table .pt-name {
   text-align: left;
-  color: #0f172a;
-  font-weight: 500;
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
   white-space: nowrap;
   width: 96px;
 }
 .pump-table .pt-extra {
   width: 96px;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 .pump-table :deep(.el-input-number) {
   width: 96px !important;
@@ -1815,8 +1816,8 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 .ld-count-label {
   width: 30px;
   min-width: 30px;;
-  font-size: 13px;
-  color: #475569;
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-600);
 }
 /* picker popover */
 .ld-picker {
@@ -1833,8 +1834,8 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   max-height: 220px;
   overflow-y: auto;
   padding: 4px 2px;
-  border-top: 1px solid #f1f5f9;
-  border-bottom: 1px solid #f1f5f9;
+  border-top: 1px solid var(--color-neutral-100);
+  border-bottom: 1px solid var(--color-neutral-100);
 }
 .ld-picker-body :deep(.el-checkbox) {
   display: flex;
@@ -1842,11 +1843,11 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   width: 100%;
   margin-right: 0;
   padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   height: auto;
 }
 .ld-picker-body :deep(.el-checkbox:hover) {
-  background: #f1f5f9;
+  background: var(--color-neutral-100);
 }
 .ld-picker-body :deep(.el-checkbox__label) {
   display: flex;
@@ -1859,14 +1860,14 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   text-overflow: ellipsis;
 }
 .ld-picker-name {
-  font-size: 13px;
-  color: #0f172a;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
 }
 .ld-picker-empty {
   padding: 12px;
   text-align: center;
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
 }
 .ld-picker-foot {
   display: flex;
@@ -1885,19 +1886,19 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   display: grid;
   grid-template-columns: 160px minmax(0, 1fr) minmax(150px, 0.25fr) minmax(240px, 0.28fr);
   gap: 0;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
   background: #fff;
   overflow: hidden;
 }
 .ld-row:first-child {
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-subtle);
 }
 .ld-row--head {
-  background: #f1f5f9;
-  font-size: 13px;
-  font-weight: 700;
-  color: #0f172a;
+  background: var(--color-neutral-100);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
   border-color: transparent;
 }
 .ld-row--head .ld-col {
@@ -1905,12 +1906,12 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 }
 .ld-col {
   padding: 12px 14px;
-  border-left: 1px solid #f1f5f9;
+  border-left: 1px solid var(--color-neutral-100);
   min-width: 0;
 }
 .ld-col:first-child {
   border-left: 0;
-  background: #f8fafc;
+  background: var(--color-neutral-50);
 }
 .ld-name-row {
   display: flex;
@@ -1930,23 +1931,23 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   line-height: 1.6;
 }
 .ld-stat-label {
-  color: #94a3b8;
+  color: var(--text-muted);
   white-space: nowrap;
 }
 .ld-stat-value {
-  color: #1e293b;
-  font-weight: 600;
+  color: var(--text-body);
+  font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .ld-stat-value em {
   font-style: normal;
-  font-weight: 400;
-  color: #94a3b8;
+  font-weight: var(--font-weight-regular);
+  color: var(--text-muted);
   font-size: 11px;
   margin-left: 2px;
 }
@@ -1970,7 +1971,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   max-width: 100%;
   display: flex;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 .ld-tag--block :deep(.el-tag__content) {
   flex: 1;
@@ -1984,7 +1985,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   justify-content: center;
 }
 .ld-tag {
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   max-width: 140px;
 }
 .ld-tag :deep(.el-tag__content) {
@@ -1996,7 +1997,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   width: 75px;
   max-width: 75px;
   padding: 0 4px;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 .ld-tag--fixed :deep(.el-tag__content) {
   flex: 1;
@@ -2011,27 +2012,27 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 }
 .ld-group-name {
   flex: 1;
-  font-size: 13px;
-  font-weight: 600;
-  color: #0f172a;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
   padding: 4px 0;
 }
 .ld-add-btn {
   border-style: dashed;
 }
 .ld-empty {
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
 }
 .ld-meta {
   margin-left: 6px;
-  color: #94a3b8;
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 .ld-mode-body {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px dashed #e2e8f0;
+  border-top: 1px dashed var(--border-subtle);
 }
 .ld-ratio-row {
   display: grid;
@@ -2039,23 +2040,23 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   gap: 6px;
   align-items: center;
   margin-bottom: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 .ld-ratio-name {
-  color: #334155;
+  color: var(--color-neutral-700);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
 .ld-ratio-unit {
-  color: #94a3b8;
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 .ld-ratio-total {
   margin-top: 4px;
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
   text-align: right;
 }
 .ld-priority-chain {
@@ -2071,7 +2072,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
 }
 .ld-priority-hint {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-muted);
   margin-bottom: 2px;
 }
 .ld-priority-tag {
@@ -2079,27 +2080,27 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  border-radius: 6px;
-  background: #eef2ff;
-  color: #1e293b;
-  font-size: 12px;
-  border: 1px solid #c7d2fe;
+  border-radius: var(--radius-sm);
+  background: var(--brand-primary-soft);
+  color: var(--text-body);
+  font-size: var(--font-size-xs);
+  border: 1px solid var(--brand-primary-soft);
   cursor: grab;
   user-select: none;
   transition: background 0.15s, box-shadow 0.15s;
 }
 .ld-priority-tag:hover {
-  background: #e0e7ff;
+  background: var(--brand-primary-soft);
 }
 .ld-priority-tag:active {
   cursor: grabbing;
 }
 .ld-priority-tag--ghost {
   opacity: 0.4;
-  background: #c7d2fe;
+  background: var(--brand-primary-soft);
 }
 .ld-priority-tag--chosen {
-  box-shadow: 0 0 0 2px #6366f1;
+  box-shadow: 0 0 0 2px var(--brand-primary);
 }
 .ld-priority-tag--drag {
   opacity: 0.9;
@@ -2115,10 +2116,10 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   padding: 2px !important;
   height: 20px !important;
   min-height: 20px !important;
-  color: #475569 !important;
+  color: var(--color-neutral-600) !important;
 }
 .ld-priority-btn:hover {
-  color: #4f46e5 !important;
+  color: var(--brand-primary-hover) !important;
   background: rgba(79, 70, 229, 0.08) !important;
 }
 .ld-priority-idx {
@@ -2128,13 +2129,13 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #4f46e5;
+  background: var(--brand-primary-hover);
   color: #fff;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
 }
 .ld-priority-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -2151,7 +2152,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
   }
   .ld-col {
     border-left: 0;
-    border-top: 1px dashed #f1f5f9;
+    border-top: 1px dashed var(--color-neutral-100);
   }
   .ld-col:first-child {
     border-top: 0;

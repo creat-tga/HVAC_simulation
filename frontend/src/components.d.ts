@@ -76,6 +76,7 @@ declare module 'vue' {
     GlobalTaskTracker: typeof import('./components/simulation/GlobalTaskTracker.vue')['default']
     HomeLayout: typeof import('./components/layout/HomeLayout.vue')['default']
     LoadChart: typeof import('./components/charts/LoadChart.vue')['default']
+    MobileBottomNav: typeof import('./components/layout/MobileBottomNav.vue')['default']
     ParticleBg: typeof import('./components/layout/ParticleBg.vue')['default']
     ProjectWorkspaceLayout: typeof import('./components/layout/ProjectWorkspaceLayout.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

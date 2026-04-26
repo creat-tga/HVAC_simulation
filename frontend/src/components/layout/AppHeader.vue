@@ -5,13 +5,15 @@ import { useAuthStore } from '@/stores/auth'
 import { setLocale, getLocale } from '@/i18n'
 import { ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import { Fold } from '@element-plus/icons-vue'
+import { Fold, Connection, User, Moon, Sunny } from '@element-plus/icons-vue'
 import { useResponsive } from '@/composables/useResponsive'
+import { useTheme } from '@/composables/useTheme'
 
 const router = useRouter()
 const { t } = useI18n()
 const authStore = useAuthStore()
 const { isMobile, toggleSidebar } = useResponsive()
+const { currentTheme, toggleTheme } = useTheme()
 
 const currentLang = ref(getLocale() === 'en-US' ? 'en-US' : 'zh-CN')
 
@@ -45,9 +47,15 @@ async function handleLogout() {
       </div>
     </div>
     <div class="header-right">
+      <el-tooltip :content="currentTheme === 'dark' ? '切换到浅色' : '切换到深色'" placement="bottom" :show-after="300">
+        <el-button text class="theme-btn" @click="toggleTheme">
+          <el-icon :size="16"><component :is="currentTheme === 'dark' ? Sunny : Moon" /></el-icon>
+        </el-button>
+      </el-tooltip>
       <el-dropdown @command="switchLanguage" trigger="click">
         <el-button text class="lang-btn">
-          🌐 <span v-if="!isMobile">{{ currentLang === 'zh-CN' ? '中文' : 'English' }}</span>
+          <el-icon :size="16"><Connection /></el-icon>
+          <span v-if="!isMobile">{{ currentLang === 'zh-CN' ? '中文' : 'English' }}</span>
         </el-button>
         <template #dropdown>
           <el-dropdown-menu>
@@ -62,7 +70,8 @@ async function handleLogout() {
       </el-dropdown>
       <el-dropdown trigger="click">
         <span class="user-info">
-          👤 <span v-if="!isMobile">{{ authStore.username }}</span>
+          <el-icon :size="16"><User /></el-icon>
+          <span v-if="!isMobile">{{ authStore.username }}</span>
         </span>
         <template #dropdown>
           <el-dropdown-menu>
@@ -85,7 +94,7 @@ async function handleLogout() {
   background: rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-xs);
   z-index: 10;
 }
 
@@ -111,22 +120,22 @@ async function handleLogout() {
   flex-shrink: 0;
   padding: 4px;
   background: rgba(6, 182, 212, 0.1);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .platform-title {
   margin: 0;
   font-size: 17px;
-  color: #0f172a;
-  font-weight: 600;
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
   user-select: none;
   white-space: nowrap;
   letter-spacing: -0.01em;
 }
 
 .platform-title-en {
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
   user-select: none;
   white-space: nowrap;
   margin-left: 2px;
@@ -141,11 +150,14 @@ async function handleLogout() {
 
 .user-info {
   cursor: pointer;
-  color: #475569;
-  font-size: 14px;
+  color: var(--color-neutral-600);
+  font-size: var(--font-size-base);
   padding: 6px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   transition: background 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .user-info:hover {
@@ -177,7 +189,7 @@ async function handleLogout() {
   }
 
   .platform-title {
-    font-size: 14px;
+    font-size: var(--font-size-base);
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -189,7 +201,7 @@ async function handleLogout() {
 
   .user-info {
     padding: 4px 6px;
-    font-size: 13px;
+    font-size: var(--font-size-sm);
   }
 }
 </style>

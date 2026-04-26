@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTaskTrackerStore, type TrackedTask } from '@/stores/taskTracker'
+import { useResponsive } from '@/composables/useResponsive'
 import { Close, ArrowDown, ArrowUp, Check, CircleClose, VideoPause } from '@element-plus/icons-vue'
 
 const tracker = useTaskTrackerStore()
 const router = useRouter()
 const { t } = useI18n()
+const { isMobile } = useResponsive()
+
+const rootRef = ref<HTMLElement | null>(null)
 
 const visible = computed(() => tracker.tasks.size > 0)
 
@@ -49,11 +53,23 @@ function goToBuilding(task: TrackedTask) {
 function handleCancel(task: TrackedTask) {
   tracker.cancelTask(task.resultId)
 }
+
+// 移动端：点击外部自动折叠
+function onDocClick(e: MouseEvent) {
+  if (!isMobile.value) return
+  if (tracker.collapsed) return
+  const root = rootRef.value
+  if (!root) return
+  if (e.target instanceof Node && root.contains(e.target)) return
+  tracker.collapsed = true
+}
+onMounted(() => document.addEventListener('click', onDocClick, true))
+onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
 </script>
 
 <template>
   <Transition name="tracker-slide">
-    <div v-if="visible" class="global-task-tracker">
+    <div v-if="visible" ref="rootRef" class="global-task-tracker" :class="{ 'is-collapsed': tracker.collapsed }">
       <!-- Header bar -->
       <div class="tracker-header" @click="tracker.collapsed = !tracker.collapsed">
         <div class="tracker-summary">
@@ -66,7 +82,7 @@ function handleCancel(task: TrackedTask) {
             {{ doneCount }}
           </el-tag>
         </div>
-        <div class="tracker-actions">
+        <div v-if="!tracker.collapsed" class="tracker-actions">
           <el-icon
             v-if="tracker.completedTasks.length > 0 && !tracker.hasActiveTasks"
             :title="t('taskTracker.clearDone')"
@@ -283,6 +299,67 @@ function handleCancel(task: TrackedTask) {
 .status-failed,
 .status-cancelled {
   color: #ef4444;
+}
+
+/* ----------------- 移动端：缩小并悬浮于右上角 ----------------- */
+@media (max-width: 768px) {
+  .global-task-tracker {
+    top: calc(env(safe-area-inset-top, 0px) + 6px);
+    right: 8px;
+    bottom: auto;
+    left: auto;
+    width: auto;
+    max-width: 78vw;
+    border-radius: 999px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.04);
+    z-index: 1100;
+    transition: opacity var(--motion-base, 200ms) var(--easing-standard, ease);
+  }
+  /* 折叠态：极紧凑 + 透明 */
+  .global-task-tracker.is-collapsed {
+    opacity: 0.5;
+  }
+  .global-task-tracker.is-collapsed:hover,
+  .global-task-tracker.is-collapsed:focus-within {
+    opacity: 1;
+  }
+  .global-task-tracker.is-collapsed .tracker-header {
+    padding: 4px 10px;
+  }
+  .global-task-tracker.is-collapsed .tracker-title {
+    display: none;
+  }
+  /* 展开态：还原宽度 + 胶囊 */
+  .global-task-tracker:not(.is-collapsed) {
+    width: min(78vw, 300px);
+    border-radius: 12px;
+    opacity: 1;
+  }
+  .tracker-header {
+    padding: 6px 10px;
+    gap: 6px;
+  }
+  .tracker-summary {
+    font-size: 12px;
+    gap: 6px;
+  }
+  .tracker-title {
+    font-size: 12px;
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tracker-actions { gap: 4px; }
+  .tracker-body {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .tracker-item {
+    padding: 8px 10px;
+  }
+  .item-name { font-size: 12px; max-width: 120px; }
+  .item-type { font-size: 10px; }
 }
 
 .item-error {

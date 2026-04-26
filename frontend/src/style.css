@@ -21,6 +21,127 @@
   --el-color-primary-light-8: #cffafe;
   --el-color-primary-light-9: #ecfeff;
   --el-color-primary-dark-2: #0e7490;
+
+  /* ============================================================
+     Design Tokens (P1 - 2026-04-26)
+     使用约定：
+     - 优先用 --color-* / --space-* / --font-* 等 token，避免硬编码颜色与数值。
+     - --brand-primary 用于：主操作按钮、当前激活步骤、主品牌色高亮。
+     - --brand-accent 用于：次要强调（链接、tag、派生数据底色），与 primary 区分。
+     - --color-success/warning/danger 仅用于状态语义，不作装饰色。
+     ============================================================ */
+
+  /* ---- 中性色阶（slate，9 阶 + 2 阶背景） ---- */
+  --color-neutral-50:  #f8fafc;
+  --color-neutral-100: #f1f5f9;
+  --color-neutral-200: #e2e8f0;
+  --color-neutral-300: #cbd5e1;
+  --color-neutral-400: #94a3b8;
+  --color-neutral-500: #64748b;
+  --color-neutral-600: #475569;
+  --color-neutral-700: #334155;
+  --color-neutral-800: #1e293b;
+  --color-neutral-900: #0f172a;
+
+  /* ---- 品牌色 ----
+     主品牌：紫蓝（与顶部 topbar 渐变同源）。
+     辅助：青（保留与现有 el-color-primary 一致，用于次要强调）。 */
+  --brand-primary:        #6366f1;  /* indigo-500 */
+  --brand-primary-hover:  #4f46e5;  /* indigo-600 */
+  --brand-primary-active: #4338ca;  /* indigo-700 */
+  --brand-primary-soft:   #e0e7ff;  /* indigo-100，浅底/标签底 */
+  --brand-primary-on:     #ffffff;
+  --brand-primary-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+
+  --brand-accent:        #0891b2;  /* cyan-600 */
+  --brand-accent-hover:  #0e7490;
+  --brand-accent-soft:   #cffafe;
+  --brand-accent-on:     #ffffff;
+
+  /* ---- 状态色（语义） ---- */
+  --color-success:      #10b981;
+  --color-success-soft: #d1fae5;
+  --color-success-on:   #ffffff;
+  --color-warning:      #f59e0b;
+  --color-warning-soft: #fef3c7;
+  --color-warning-on:   #78350f;
+  --color-danger:       #ef4444;
+  --color-danger-soft:  #fee2e2;
+  --color-danger-on:    #ffffff;
+  --color-info:         #3b82f6;
+  --color-info-soft:    #dbeafe;
+
+  /* ---- 文字 / 边框 / 表面 ---- */
+  --text-primary:   var(--color-neutral-900);  /* 标题 */
+  --text-body:      var(--color-neutral-800);  /* 正文 */
+  --text-secondary: var(--color-neutral-500);  /* 次要 */
+  --text-muted:     var(--color-neutral-400);  /* 弱化/单位 */
+  --text-disabled:  var(--color-neutral-300);
+  --text-on-brand:  #ffffff;
+
+  --border-subtle: var(--color-neutral-200);
+  --border-base:   var(--color-neutral-300);
+  --border-strong: var(--color-neutral-400);
+
+  --surface-base:     #ffffff;                  /* 主卡片 */
+  --surface-raised:   #ffffff;                  /* 高层卡片 */
+  --surface-sunken:   var(--color-neutral-50);  /* 表头 / 嵌套底 */
+  --surface-overlay:  rgba(255,255,255,0.85);
+
+  /* ---- 间距尺度（4 倍数） ---- */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ---- 字号 / 行高 ---- */
+  --font-size-xs:   12px;
+  --font-size-sm:   13px;
+  --font-size-base: 14px;
+  --font-size-md:   13px;
+  --font-size-lg:   18px;
+  --font-size-xl:   20px;
+  --font-size-2xl:  24px;
+  --line-height-tight:  1.25;
+  --line-height-normal: 1.5;
+  --line-height-loose:  1.7;
+  --font-weight-regular: 400;
+  --font-weight-medium:  500;
+  --font-weight-semibold: 600;
+  --font-weight-bold:    700;
+
+  /* ---- 圆角 ---- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+
+  /* ---- 阴影 ---- */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 10px 24px rgba(15, 23, 42, 0.10);
+  --shadow-focus: 0 0 0 3px rgba(99, 102, 241, 0.18);
+
+  /* ---- Z-index 层级 ---- */
+  --z-dropdown: 1000;
+  --z-sticky:   1020;
+  --z-overlay:  1040;
+  --z-modal:    1060;
+  --z-toast:    1080;
+
+  /* ---- 过渡 ---- */
+  --motion-fast:   120ms;
+  --motion-normal: 200ms;
+  --motion-slow:   320ms;
+  --easing-standard: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 html {
@@ -115,6 +236,54 @@ html[data-theme='dark'] {
   --app-muted: #94a3b8;
   --app-border: rgba(71, 85, 105, 0.55);
   --app-shadow: 0 10px 30px rgba(2, 6, 23, 0.35);
+
+  /* ---- 暗色 token 覆盖 ---- */
+  --color-neutral-50:  #0f172a;
+  --color-neutral-100: #111827;
+  --color-neutral-200: #1f2937;
+  --color-neutral-300: #334155;
+  --color-neutral-400: #475569;
+  --color-neutral-500: #64748b;
+  --color-neutral-600: #94a3b8;
+  --color-neutral-700: #cbd5e1;
+  --color-neutral-800: #e2e8f0;
+  --color-neutral-900: #f8fafc;
+
+  --brand-primary:        #818cf8;
+  --brand-primary-hover:  #6366f1;
+  --brand-primary-active: #4f46e5;
+  --brand-primary-soft:   rgba(99, 102, 241, 0.18);
+  --brand-primary-on:     #0b1120;
+
+  --brand-accent:        #22d3ee;
+  --brand-accent-hover:  #06b6d4;
+  --brand-accent-soft:   rgba(34, 211, 238, 0.18);
+
+  --color-success-soft: rgba(16, 185, 129, 0.18);
+  --color-warning-soft: rgba(245, 158, 11, 0.18);
+  --color-danger-soft:  rgba(239, 68, 68, 0.18);
+  --color-info-soft:    rgba(59, 130, 246, 0.18);
+
+  --text-primary:   #f8fafc;
+  --text-body:      #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted:     #64748b;
+  --text-disabled:  #475569;
+
+  --border-subtle: rgba(71, 85, 105, 0.45);
+  --border-base:   rgba(71, 85, 105, 0.65);
+  --border-strong: rgba(148, 163, 184, 0.55);
+
+  --surface-base:    #1e293b;
+  --surface-raised:  #273449;
+  --surface-sunken:  #0f172a;
+  --surface-overlay: rgba(15, 23, 42, 0.85);
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 10px 24px rgba(0, 0, 0, 0.40);
+  --shadow-focus: 0 0 0 3px rgba(129, 140, 248, 0.30);
 }
 
 html[data-theme='dark'] body {

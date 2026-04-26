@@ -8,6 +8,9 @@ import i18n from '@/i18n'
 import '@/plugins/echarts'
 import App from './App.vue'
 import './style.css'
+import { initTheme } from '@/composables/useTheme'
+
+initTheme()
 
 const app = createApp(App)
 

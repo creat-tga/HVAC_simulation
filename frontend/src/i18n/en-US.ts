@@ -60,6 +60,14 @@ export default {
       admin: 'System Admin',
     },
   },
+  mobileNav: {
+    templates: 'Library',
+    mine: 'Mine',
+  },
+  library: {
+    hubTitle: 'Template Library',
+    hubSub: 'Pick a category to view or manage templates',
+  },
   workspace: {
     backToProjects: 'Back to Projects',
     projectLabel: 'Current Project',

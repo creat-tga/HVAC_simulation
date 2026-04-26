@@ -2,7 +2,7 @@
 /**
  * Project workspace layout: left sidebar with 3 stages (建筑 / 系统 / 可视化).
  */
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '@/stores/project'
@@ -12,7 +12,9 @@ import {
   Setting,
   PieChart,
   ArrowLeft,
+  ArrowRight,
   Loading,
+  Location,
 } from '@element-plus/icons-vue'
 import TopActionBar from '@/components/layout/TopActionBar.vue'
 
@@ -43,7 +45,7 @@ const navItems = computed<NavItem[]>(() => [
     path: `/projects/${projectId.value}/building`,
     matches: ['workspaceBuilding', 'building', 'loadCalc'],
     step: 1,
-    color: '#0891b2',
+    color: 'var(--brand-accent)',
   },
   {
     key: 'system',
@@ -84,52 +86,80 @@ async function loadProject() {
 
 watch(projectId, loadProject, { immediate: false })
 onMounted(loadProject)
+
+// G-2: sidebar collapse state with localStorage persistence
+const SIDEBAR_KEY = 'hvac_workspace_sidebar_collapsed'
+const sidebarCollapsed = ref<boolean>((() => {
+  try { return localStorage.getItem(SIDEBAR_KEY) === '1' } catch { return false }
+})())
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  try { localStorage.setItem(SIDEBAR_KEY, sidebarCollapsed.value ? '1' : '0') } catch { /* ignore */ }
+}
 </script>
 
 <template>
   <div class="ws-layout">
-    <aside class="ws-side">
-      <button class="ws-back" @click="router.push('/projects')">
+    <aside class="ws-side" :class="{ 'ws-side--collapsed': sidebarCollapsed }">
+      <button v-if="!sidebarCollapsed" class="ws-back" @click="router.push('/projects')">
         <el-icon :size="14"><ArrowLeft /></el-icon>
         <span>{{ t('workspace.backToProjects') }}</span>
       </button>
+      <button v-else class="ws-back ws-back--icon" @click="router.push('/projects')" :title="t('workspace.backToProjects')">
+        <el-icon :size="16"><ArrowLeft /></el-icon>
+      </button>
 
-      <div class="ws-proj-card">
+      <div v-if="!sidebarCollapsed" class="ws-proj-card">
         <div class="ws-proj-tag">{{ t('workspace.projectLabel') }}</div>
         <div class="ws-proj-name" :title="store.currentProject?.name">
           <el-icon v-if="!store.currentProject" :size="14" class="loading-ico"><Loading /></el-icon>
           {{ store.currentProject?.name || t('common.loading') }}
         </div>
         <div v-if="store.currentProject?.location" class="ws-proj-loc">
-          📍 {{ store.currentProject.location }}
+          <el-icon :size="12"><Location /></el-icon>
+          {{ store.currentProject.location }}
         </div>
       </div>
 
-      <div class="ws-stage-label">{{ t('workspace.stages') }}</div>
+      <div v-if="!sidebarCollapsed" class="ws-stage-label">{{ t('workspace.stages') }}</div>
 
       <nav class="ws-nav">
-        <div
+        <el-tooltip
           v-for="item in navItems"
           :key="item.key"
-          class="ws-item"
-          :class="{ active: isActive(item) }"
-          :style="{ '--c': item.color } as any"
-          @click="router.push(item.path)"
+          :content="item.label"
+          placement="right"
+          :disabled="!sidebarCollapsed"
+          :show-after="200"
         >
-          <div class="ws-item-step">{{ item.step }}</div>
-          <div class="ws-item-body">
-            <div class="ws-item-title">
-              <el-icon :size="14"><component :is="item.icon" /></el-icon>
-              <span>{{ item.label }}</span>
+          <div
+            class="ws-item"
+            :class="{ active: isActive(item) }"
+            :style="{ '--c': item.color } as any"
+            @click="router.push(item.path)"
+          >
+            <div class="ws-item-step">{{ item.step }}</div>
+            <div v-if="!sidebarCollapsed" class="ws-item-body">
+              <div class="ws-item-title">
+                <el-icon :size="14"><component :is="item.icon" /></el-icon>
+                <span>{{ item.label }}</span>
+              </div>
+              <div class="ws-item-desc">{{ item.desc }}</div>
             </div>
-            <div class="ws-item-desc">{{ item.desc }}</div>
+            <div v-else class="ws-item-mini-label">{{ item.label }}</div>
           </div>
-        </div>
+        </el-tooltip>
       </nav>
+
+      <button class="ws-collapse-btn" @click="toggleSidebar" :title="sidebarCollapsed ? '展开' : '折叠'">
+        <el-icon :size="14"><component :is="sidebarCollapsed ? ArrowRight : ArrowLeft" /></el-icon>
+      </button>
     </aside>
 
     <main class="ws-main">
       <TopActionBar />
+      <!-- 视图自定义顶栏挂载点（Teleport 目标），位于 .ws-content 之外，不参与滚动 -->
+      <div id="ws-mobile-topbar-slot"></div>
       <div class="ws-content">
         <router-view />
       </div>
@@ -142,7 +172,7 @@ onMounted(loadProject)
   display: flex;
   height: 100vh;
   height: 100dvh;
-  background: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+  background: linear-gradient(135deg, var(--color-neutral-50) 0%, var(--brand-primary-soft) 100%);
 }
 
 .ws-side {
@@ -156,24 +186,85 @@ onMounted(loadProject)
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+  overflow-x: hidden;
+  transition: width var(--motion-normal) var(--easing-standard), padding var(--motion-normal) var(--easing-standard);
+  position: relative;
 }
+.ws-side--collapsed {
+  width: 64px;
+  padding: 16px 8px;
+}
+.ws-collapse-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-base);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  align-self: flex-end;
+  margin-top: auto;
+  box-shadow: var(--shadow-xs);
+  transition: all var(--motion-fast) var(--easing-standard);
+}
+.ws-collapse-btn:hover {
+  color: var(--brand-primary);
+  border-color: var(--brand-primary);
+  background: var(--brand-primary-soft);
+}
+.ws-side--collapsed .ws-collapse-btn {
+  align-self: center;
+}
+.ws-back--icon {
+  align-self: center;
+  padding: 6px;
+}
+.ws-item-mini-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-align: center;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 48px;
+}
+.ws-side--collapsed .ws-item {
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+}
+.ws-collapse-btn:hover {
+  color: var(--brand-primary);
+  border-color: var(--brand-primary);
+}
+.ws-side--collapsed .ws-nav { align-items: center; }
+.ws-side--collapsed .ws-item {
+  justify-content: center;
+  padding: 8px;
+}
+.ws-side--collapsed .ws-item-step { margin: 0; }
 
 .ws-back {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.18s;
   align-self: flex-start;
 }
 .ws-back:hover {
-  color: #0891b2;
+  color: var(--brand-accent);
   background: rgba(6, 182, 212, 0.08);
 }
 
@@ -181,14 +272,14 @@ onMounted(loadProject)
   padding: 14px 14px 12px;
   background: linear-gradient(135deg, rgba(8, 145, 178, 0.08), rgba(2, 132, 199, 0.04));
   border: 1px solid rgba(8, 145, 178, 0.18);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
 }
 .ws-proj-tag {
   font-size: 10px;
   letter-spacing: 0.1em;
-  color: #0891b2;
+  color: var(--brand-accent);
   text-transform: uppercase;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   margin-bottom: 4px;
 }
 .ws-proj-name {
@@ -196,8 +287,8 @@ onMounted(loadProject)
   align-items: center;
   gap: 6px;
   font-size: 15px;
-  font-weight: 700;
-  color: #0f172a;
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -207,16 +298,19 @@ onMounted(loadProject)
 @keyframes spin { to { transform: rotate(360deg); } }
 .ws-proj-loc {
   font-size: 11.5px;
-  color: #64748b;
+  color: var(--text-secondary);
   margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .ws-stage-label {
   font-size: 10px;
   letter-spacing: 0.12em;
-  color: #94a3b8;
+  color: var(--text-muted);
   text-transform: uppercase;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   padding: 8px 8px 0;
 }
 
@@ -230,7 +324,7 @@ onMounted(loadProject)
   gap: 12px;
   padding: 12px 12px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   transition: all 0.2s ease;
   position: relative;
@@ -247,11 +341,11 @@ onMounted(loadProject)
 }
 .ws-item-step {
   width: 26px; height: 26px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--c) 12%, white);
   color: var(--c);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
   transition: all 0.2s;
@@ -266,14 +360,14 @@ onMounted(loadProject)
   align-items: center;
   gap: 6px;
   font-size: 13.5px;
-  font-weight: 600;
-  color: #0f172a;
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
   margin-bottom: 2px;
 }
 .ws-item.active .ws-item-title { color: var(--c); }
 .ws-item-desc {
   font-size: 11.5px;
-  color: #94a3b8;
+  color: var(--text-muted);
   line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -307,19 +401,63 @@ onMounted(loadProject)
 }
 
 @media (max-width: 768px) {
-  .ws-layout { flex-direction: column; }
-  .ws-side {
-    width: 100%;
-    flex-direction: row;
-    padding: 8px 10px;
-    gap: 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
+  .ws-content {
+    padding: 10px 0;
+    margin: 0;
   }
-  .ws-back, .ws-stage-label { display: none; }
-  .ws-proj-card { flex-shrink: 0; padding: 8px 12px; }
-  .ws-nav { flex-direction: row; }
-  .ws-item { flex-shrink: 0; width: auto; padding: 8px 12px; }
+  .ws-layout { flex-direction: column; }
+
+  /* 底部 tab bar 模式（仅阶段切换，返回按钮在 TopActionBar 左上角） */
+  .ws-side, .ws-side--collapsed {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    justify-content: space-around;
+    align-items: stretch;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    gap: 4px;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    border-top: 1px solid var(--border-subtle);
+    border-right: none;
+    background: var(--surface-base);
+    box-shadow: 0 -2px 8px rgba(15, 23, 42, 0.06);
+    z-index: 100;
+    transition: none;
+  }
+  .ws-collapse-btn,
+  .ws-stage-label,
+  .ws-proj-card,
+  .ws-back, .ws-back--icon { display: none; }
+  .ws-nav {
+    display: flex;
+    flex: 1;
+    flex-direction: row;
+    justify-content: space-around;
+    gap: 4px;
+  }
+  .ws-item {
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 6px 4px;
+    width: auto;
+    text-align: center;
+  }
+  .ws-item-step { display: none; }
+  .ws-item-body { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .ws-item-title { font-size: 10px; gap: 2px; flex-direction: column; }
+  .ws-item-title span { font-size: 10px; }
   .ws-item-desc { display: none; }
+
+  /* main 预留 tab bar 高度 */
+  .ws-main { padding-bottom: 56px; }
+  .ws-content { padding-bottom: 8px; }
 }
 </style>

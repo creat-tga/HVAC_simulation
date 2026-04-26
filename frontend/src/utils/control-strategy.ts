@@ -1,3 +1,4 @@
+import { randomUUID } from './uuid'
 import type { BuildingZone, DaySchedule } from '@/types/building'
 import type {
   AirCooledStage,
@@ -159,7 +160,7 @@ function defaultChillerStages(sub: Subsystem, derivedSub?: SubsystemDerived) {
   units.sort((a, b) => a.cooling - b.cooling)
   if (!units.length) {
     return [{
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       combo_counts: {},
       loading_down: null,
       loading_up: null,
@@ -179,7 +180,7 @@ function defaultChillerStages(sub: Subsystem, derivedSub?: SubsystemDerived) {
     const down = idx === 0 ? null : round2(Math.max(30, (prevTotal * 70) / Math.max(total, 0.1)))
     const up = idx === units.length - 1 ? null : 90
     out.push({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       combo_counts: { ...counts },
       loading_down: down,
       loading_up: up,
@@ -208,7 +209,7 @@ function defaultAirCooledStages(sub: Subsystem, derivedSub?: SubsystemDerived): 
   units.sort((a, b) => a.cooling - b.cooling)
   if (!units.length) {
     return [{
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       combo_counts: {},
       loading_down: null,
       loading_up: null,
@@ -232,7 +233,7 @@ function defaultAirCooledStages(sub: Subsystem, derivedSub?: SubsystemDerived): 
     const down = idx === 0 ? null : round2(Math.max(30, (prevTotal * 70) / Math.max(totalCooling, 0.1)))
     const up = idx === units.length - 1 ? null : 90
     out.push({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       combo_counts: { ...counts },
       loading_down: down,
       loading_up: up,
@@ -251,7 +252,7 @@ function defaultSubsystemStrategy(sub: Subsystem, derivedSub?: SubsystemDerived)
   const dp = sub.design_params || {}
   if (sub.subsystem_type === 'chiller_plant') {
     return {
-      subsystem_id: sub.id || crypto.randomUUID(),
+      subsystem_id: sub.id || randomUUID(),
       subsystem_type: sub.subsystem_type,
       run_schedules: [defaultRunSchedule()],
       water_temp: {
@@ -271,7 +272,7 @@ function defaultSubsystemStrategy(sub: Subsystem, derivedSub?: SubsystemDerived)
   if (sub.subsystem_type === 'air_cooled') {
     const pipeSystem = String(dp.pipe_system || 'two_pipe')
     return {
-      subsystem_id: sub.id || crypto.randomUUID(),
+      subsystem_id: sub.id || randomUUID(),
       subsystem_type: sub.subsystem_type,
       run_schedules: [defaultRunSchedule()],
       water_temp: {
@@ -294,7 +295,7 @@ function defaultSubsystemStrategy(sub: Subsystem, derivedSub?: SubsystemDerived)
     }
   }
   return {
-    subsystem_id: sub.id || crypto.randomUUID(),
+    subsystem_id: sub.id || randomUUID(),
     subsystem_type: 'shared_tower',
     run_schedules: [defaultRunSchedule()],
     water_temp: {},
@@ -468,5 +469,5 @@ export function computeLoadGroupStats(
 }
 
 export function createLoadGroup(index: number): LoadDistributionGroup {
-  return { id: crypto.randomUUID(), name: `分组${index + 1}` }
+  return { id: randomUUID(), name: `分组${index + 1}` }
 }

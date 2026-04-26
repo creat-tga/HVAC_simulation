@@ -3,35 +3,45 @@
  * Compact top action bar for full-screen layouts (HomeLayout / ProjectWorkspaceLayout).
  * Provides language switcher and user dropdown without the heavy AppHeader.
  */
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { setLocale, getLocale } from '@/i18n'
 import { useAuthStore } from '@/stores/auth'
-import { Connection, User, ArrowDown, Moon, Sunny } from '@element-plus/icons-vue'
+import { useTheme } from '@/composables/useTheme'
+import { useResponsive } from '@/composables/useResponsive'
+import { Connection, User, ArrowDown, ArrowLeft, Moon, Sunny } from '@element-plus/icons-vue'
 
 const { t } = useI18n()
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
+const { isMobile } = useResponsive()
 
 const currentLang = ref(getLocale() === 'en-US' ? 'en-US' : 'zh-CN')
-const currentTheme = ref<'light' | 'dark'>('light')
+const { currentTheme, toggleTheme } = useTheme()
 
-function applyTheme(theme: 'light' | 'dark') {
-  currentTheme.value = theme
-  document.documentElement.setAttribute('data-theme', theme)
-  localStorage.setItem('hvac_theme', theme)
-}
-
-function toggleTheme() {
-  applyTheme(currentTheme.value === 'dark' ? 'light' : 'dark')
-}
-
-onMounted(() => {
-  const saved = localStorage.getItem('hvac_theme')
-  const systemPrefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches
-  applyTheme(saved === 'dark' || (!saved && systemPrefersDark) ? 'dark' : 'light')
+const mobileBackPath = computed<string | null>(() => {
+  const v = route.meta?.mobileBack
+  if (typeof v === 'string') return v
+  if (typeof v === 'function') {
+    try { return (v as (r: typeof route) => string)(route) || null } catch { return null }
+  }
+  return null
 })
+function goMobileBack() {
+  if (mobileBackPath.value) router.push(mobileBackPath.value)
+}
+
+const mobileTitle = computed(() => {
+  // 仅在有 mobileBack 的非一级页面显示中央标题
+  if (!isMobile.value || !mobileBackPath.value) return ''
+  if (route.meta?.mobileNoTitle === true) return ''
+  return (route.meta?.title as string | undefined) || ''
+})
+
+// 页面自带顶栏时（如方案详情页），移动端隐藏全局 TopActionBar。
+const hideOnMobile = computed(() => isMobile.value && route.meta?.mobileCustomTopbar === true)
 
 function switchLanguage(lang: string) {
   currentLang.value = lang
@@ -49,10 +59,24 @@ function gotoAccount() {
 </script>
 
 <template>
-  <div class="top-bar">
+  <div
+    v-if="!hideOnMobile"
+    class="top-bar"
+    :class="{ 'top-bar--mobile': isMobile }"
+  >
+    <button
+      v-if="isMobile && mobileBackPath"
+      class="tb-back"
+      :aria-label="t('workspace.backToProjects') || '返回'"
+      @click="goMobileBack"
+    >
+      <el-icon :size="20"><ArrowLeft /></el-icon>
+    </button>
     <slot name="left" />
+    <h1 v-if="mobileTitle" class="tb-title">{{ mobileTitle }}</h1>
     <div class="spacer" />
-    <button class="tb-btn tb-btn--theme" @click="toggleTheme">
+    <template v-if="!isMobile">
+      <button class="tb-btn tb-btn--theme" @click="toggleTheme">
       <el-icon :size="14"><component :is="currentTheme === 'dark' ? Sunny : Moon" /></el-icon>
       <span>{{ currentTheme === 'dark' ? '浅色' : '深色' }}</span>
     </button>
@@ -83,6 +107,7 @@ function gotoAccount() {
         </el-dropdown-menu>
       </template>
     </el-dropdown>
+    </template>
   </div>
 </template>
 
@@ -121,4 +146,44 @@ function gotoAccount() {
   outline: none;
   border-color: rgba(8, 145, 178, 0.4);
 }
+.top-bar--mobile {
+  padding: 6px 8px;
+  background: transparent;
+  border-bottom: none;
+  min-height: 44px;
+}
+.top-bar--mobile:has(> .spacer:only-child) {
+  display: none;
+}
+.tb-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  pointer-events: none;
+  max-width: 60vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.top-bar--mobile { position: relative; }
+.tb-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  color: var(--text-body);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--motion-fast) var(--easing-standard);
+}
+.tb-back:active { background: var(--color-neutral-100); }
 </style>

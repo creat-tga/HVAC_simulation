@@ -177,7 +177,7 @@ async function handleRunAllLoads() {
 <template>
   <div class="project-view">
     <!-- Section: building list -->
-    <div class="section-header">
+    <div v-if="!isMobile" class="section-header">
       <div class="section-header-left">
         <h2>{{ t('building.title') }}</h2>
         <span class="section-hint">在此处管理项目下的所有建筑及其负荷仿真</span>
@@ -198,47 +198,92 @@ async function handleRunAllLoads() {
         v-for="row in store.buildings"
         :key="row.id"
         class="building-card"
+        :class="{ 'building-card--dim': !simMap[row.id] }"
         shadow="hover"
         @click="openBuilding(row.id)"
       >
         <div class="building-card-header">
           <span class="building-name">{{ row.name }}</span>
-          <el-tag v-if="row.building_type" size="small" type="info">
+          <el-tag
+            :type="simMap[row.id] ? 'success' : 'info'"
+            size="small"
+            effect="light"
+          >
+            {{ simMap[row.id] ? t('viz.hasResult') : t('building.noSimulation') }}
+          </el-tag>
+          <el-button
+            class="building-card-del"
+            type="danger"
+            text
+            circle
+            :icon="Delete"
+            size="small"
+            @click.stop="handleDeleteBuilding(row.id)"
+            :title="t('common.delete')"
+          />
+        </div>
+
+        <div class="building-card-meta">
+          <span class="meta-pill meta-pill--area">
+            <el-icon class="meta-pill-icon"><OfficeBuilding /></el-icon>
+            <span class="meta-pill-value">{{ formatNum(getBuildingArea(row)) }}</span>
+            <span class="meta-pill-unit">m²</span>
+          </span>
+          <span class="meta-pill">
+            <span class="meta-pill-value">{{ getZoneCount(row) }}</span>
+            <span class="meta-pill-unit">个分区</span>
+          </span>
+          <el-tag v-if="row.building_type" size="small" type="info" effect="plain">
             {{ t(`building.types.${row.building_type}`) }}
           </el-tag>
+          <el-tag v-if="row.floor_count" size="small" effect="plain">
+            {{ row.floor_count }} 层
+          </el-tag>
         </div>
-        <div class="building-card-sim">
-          <div class="sim-item">
-            <span class="sim-label">建筑面积</span>
-            <span class="sim-value">{{ formatNum(getBuildingArea(row)) }} m²</span>
+
+        <div class="building-card-stats">
+          <div class="stat-item stat-cool">
+            <div class="stat-label">冷负荷峰值</div>
+            <div class="stat-value">
+              {{ simMap[row.id] ? formatNum(simMap[row.id]?.peak_cooling_load) : '-' }}
+              <span class="stat-unit">kW</span>
+            </div>
           </div>
-          <div class="sim-item">
-            <span class="sim-label">{{ t('building.peakCooling') }}</span>
-            <span class="sim-value">{{ formatNum(simMap[row.id]?.peak_cooling_load) }}</span>
+          <div class="stat-item stat-heat">
+            <div class="stat-label">热负荷峰值</div>
+            <div class="stat-value">
+              {{ simMap[row.id] ? formatNum(simMap[row.id]?.peak_heating_load) : '-' }}
+              <span class="stat-unit">kW</span>
+            </div>
           </div>
-          <div class="sim-item">
-            <span class="sim-label">{{ t('building.peakHeating') }}</span>
-            <span class="sim-value">{{ formatNum(simMap[row.id]?.peak_heating_load) }}</span>
+          <div class="stat-item stat-cool-soft">
+            <div class="stat-label">冷负荷累计</div>
+            <div class="stat-value">
+              {{ simMap[row.id] ? formatNum(simMap[row.id]?.total_cooling_load) : '-' }}
+              <span class="stat-unit">kWh</span>
+            </div>
           </div>
-        </div>
-        <div class="building-card-actions" @click.stop>
-          <el-button
-            size="small"
-            :icon="VideoPlay"
-            :loading="runningBuildings.has(row.id)"
-            @click.stop="handleRunLoad(row)"
-          >
-            {{ t('building.runLoad') }}
-          </el-button>
-          <el-button
-            type="danger"
-            size="small"
-            text
-            :icon="Delete"
-            @click.stop="handleDeleteBuilding(row.id)"
-          >
-            {{ t('common.delete') }}
-          </el-button>
+          <div class="stat-item stat-heat-soft">
+            <div class="stat-label">热负荷累计</div>
+            <div class="stat-value">
+              {{ simMap[row.id] ? formatNum(simMap[row.id]?.total_heating_load) : '-' }}
+              <span class="stat-unit">kWh</span>
+            </div>
+          </div>
+          <div class="stat-item stat-cool">
+            <div class="stat-label">单位面积冷负荷</div>
+            <div class="stat-value">
+              {{ getCoolPerArea(row) }}
+              <span class="stat-unit">W/m²</span>
+            </div>
+          </div>
+          <div class="stat-item stat-heat">
+            <div class="stat-label">单位面积热负荷</div>
+            <div class="stat-value">
+              {{ getHeatPerArea(row) }}
+              <span class="stat-unit">W/m²</span>
+            </div>
+          </div>
         </div>
       </el-card>
     </div>
@@ -360,6 +405,26 @@ async function handleRunAllLoads() {
         {{ t('building.add') }}
       </el-button>
     </el-empty>
+
+    <!-- 移动端底部固定主操作栏 -->
+    <div v-if="isMobile" class="mobile-action-bar">
+      <el-button
+        class="mab-btn"
+        :icon="VideoPlay"
+        :disabled="store.buildings.length === 0"
+        @click="handleRunAllLoads"
+      >
+        {{ t('building.runAllLoads') }}
+      </el-button>
+      <el-button
+        class="mab-btn"
+        type="primary"
+        :icon="Plus"
+        @click="handleAddBuilding"
+      >
+        {{ t('building.add') }}
+      </el-button>
+    </div>
   </div>
 </template>
 
@@ -647,15 +712,17 @@ async function handleRunAllLoads() {
     font-size: 20px;
   }
   .section-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
   }
   .section-header-right {
-    width: 100%;
+    width: auto;
+    gap: 8px;
   }
   .section-header-right .el-button {
-    flex: 1;
+    flex: 0 0 auto;
   }
 
   .building-cards {
@@ -672,16 +739,20 @@ async function handleRunAllLoads() {
   }
   .building-card-header {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 8px;
     margin-bottom: 10px;
+  }
+  .building-card-del {
+    margin-left: auto;
   }
   .building-name {
     font-size: 16px;
     font-weight: 600;
     color: #1e293b;
-    flex: 1;
-    margin-right: 8px;
+    flex: 0 1 auto;
+    margin-right: 0;
   }
   .building-tags {
     display: flex;
@@ -691,8 +762,7 @@ async function handleRunAllLoads() {
   .building-card-sim {
     display: flex;
     gap: 16px;
-    margin-bottom: 12px;
-    padding: 8px 0;
+    padding: 8px 0 0;
     border-top: 1px solid #f0f0f0;
   }
   .sim-item {
@@ -709,11 +779,109 @@ async function handleRunAllLoads() {
     font-weight: 600;
     color: #334155;
   }
-  .building-card-actions {
+
+  /* 与桌面 bcard 一致的元数据/统计样式（移动端复用） */
+  .building-card-meta {
     display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .meta-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--surface-sunken, #f1f5f9);
+    color: var(--text-secondary, #475569);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .meta-pill--area {
+    background: var(--brand-primary-soft, rgba(59, 130, 246, 0.1));
+    color: var(--brand-primary, #3b82f6);
+  }
+  .meta-pill-icon { font-size: 12px; }
+  .meta-pill-value { font-weight: 600; }
+  .meta-pill-unit { opacity: 0.75; font-size: 11px; }
+
+  .building-card-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
     padding-top: 10px;
-    border-top: 1px solid #f0f0f0;
+    border-top: 1px solid var(--border-subtle, #f0f0f0);
+  }
+  .building-card-stats .stat-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2px;
+    padding: 8px 8px;
+    border-radius: 10px;
+    background: var(--surface-sunken, #f8fafc);
+    text-align: center;
+    min-width: 0;
+  }
+  .building-card-stats .stat-item.stat-cool { background: rgba(59, 130, 246, 0.08); }
+  .building-card-stats .stat-item.stat-heat { background: rgba(249, 115, 22, 0.08); }
+  .building-card-stats .stat-item.stat-cool-soft { background: rgba(59, 130, 246, 0.04); }
+  .building-card-stats .stat-item.stat-heat-soft { background: rgba(249, 115, 22, 0.04); }
+  .building-card-stats .stat-label {
+    font-size: 11px;
+    color: var(--text-muted, #94a3b8);
+    /* 自适应换行：CJK 默认按字符可断 */
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+    text-align: center;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .building-card-stats .stat-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary, #1e293b);
+    display: inline-flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 3px;
+    white-space: nowrap;
+  }
+  .building-card-stats .stat-unit {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--text-muted, #94a3b8);
+  }
+  .building-card--dim { opacity: 0.92; }
+
+  /* 移动端底部固定主操作栏（位于 stage tab bar 上方） */
+  .project-view { padding-bottom: 84px; }
+  .mobile-action-bar {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    gap: 10px;
+    z-index: 90;
+    pointer-events: none;
+  }
+  .mobile-action-bar .mab-btn {
+    flex: 1;
+    pointer-events: auto;
+    height: 48px;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
   }
 }
 </style>

@@ -103,4 +103,16 @@ const cards = [
   color: #64748b;
   font-size: 13px;
 }
+
+@media (max-width: 768px) {
+  .ws-page-header { display: none; }
+  .viz-cards {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    max-width: none;
+  }
+  .viz-card { padding: 20px 16px; }
+  .viz-card h3 { font-size: 16px; margin: 10px 0 4px; }
+  .viz-card p { font-size: 12px; }
+}
 </style>
