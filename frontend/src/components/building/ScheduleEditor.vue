@@ -15,7 +15,7 @@ import { ElIcon, ElCascader, ElAlert } from 'element-plus'
 import { Delete, MagicStick, User, Sunny, Lightning, Position } from '@element-plus/icons-vue'
 import type { DaySchedule } from '@/types/building'
 
-type SchType = 'people' | 'lighting' | 'equipment' | 'fresh' | undefined
+type SchType = 'people' | 'lighting' | 'equipment' | 'fresh' | 'setpoint' | undefined
 
 const props = defineProps<{
   modelValue: DaySchedule
@@ -90,6 +90,13 @@ const TYPE_PALETTE: Record<string, { rgb: string; tagZh: string; iconBg: string;
     iconColor: '#14b8a6',
     ringColor: 'rgba(20, 184, 166, 0.55)'
   },
+  setpoint: {
+    rgb: '14, 165, 233',
+    tagZh: '温湿度',
+    iconBg: 'rgba(14, 165, 233, 0.12)',
+    iconColor: '#0284c7',
+    ringColor: 'rgba(14, 165, 233, 0.55)'
+  },
   default: {
     rgb: '139, 92, 246',
     tagZh: '通用',
@@ -99,7 +106,7 @@ const TYPE_PALETTE: Record<string, { rgb: string; tagZh: string; iconBg: string;
   }
 }
 
-const TYPE_ICONS = { people: User, lighting: Sunny, equipment: Lightning, fresh: Position } as const
+const TYPE_ICONS = { people: User, lighting: Sunny, equipment: Lightning, fresh: Position, setpoint: Sunny } as const
 
 const palette = computed(() => TYPE_PALETTE[props.type || 'default'] || TYPE_PALETTE.default)
 const typeIcon = computed(() => TYPE_ICONS[props.type as keyof typeof TYPE_ICONS] || User)
@@ -172,6 +179,11 @@ function onWeekdayPointerEnd() {
 const editingHour = ref<number | null>(null)
 const editingValue = ref<number>(0)
 const editingInputRef = ref<HTMLInputElement | null>(null)
+const isCompactViewport = ref(false)
+
+function updateCompactViewport() {
+  isCompactViewport.value = window.matchMedia('(max-width: 768px)').matches
+}
 
 function startEdit(h: number) {
   editingHour.value = h
@@ -202,6 +214,12 @@ function onCellDblClick(h: number) {
   arr[h] = 0
   patch({ hourly_ratios: arr })
   if (editingHour.value === h) editingHour.value = null
+}
+
+let suppressValueClickUntil = 0
+function onValueCellClick(h: number) {
+  if (Date.now() < suppressValueClickUntil) return
+  startEdit(h)
 }
 
 // ===== drag (vertical) =====
@@ -237,6 +255,69 @@ function onDragEnd() {
   document.body.classList.remove('sched-dragging')
   window.removeEventListener('mousemove', onDragMove)
   window.removeEventListener('mouseup', onDragEnd)
+}
+
+const LONG_PRESS_MS = 500
+let touchAdjustTimer: ReturnType<typeof setTimeout> | null = null
+const touchAdjustState = ref<{ hour: number; startY: number; startVal: number; active: boolean } | null>(null)
+const isValueTouchAdjusting = computed(() => Boolean(touchAdjustState.value?.active))
+
+function clearTouchAdjustTimer() {
+  if (touchAdjustTimer) {
+    clearTimeout(touchAdjustTimer)
+    touchAdjustTimer = null
+  }
+}
+
+function onValueTouchStart(e: TouchEvent, h: number) {
+  if (isBinary.value) return
+  const touch = e.touches[0]
+  if (!touch) return
+  clearTouchAdjustTimer()
+  touchAdjustState.value = {
+    hour: h,
+    startY: touch.clientY,
+    startVal: ratios.value[h] ?? 0,
+    active: false,
+  }
+  touchAdjustTimer = setTimeout(() => {
+    const state = touchAdjustState.value
+    if (!state || state.hour !== h) return
+    state.active = true
+    cancelEdit()
+    document.body.classList.add('sched-dragging')
+  }, LONG_PRESS_MS)
+  window.addEventListener('touchmove', onValueTouchMove, { passive: false })
+  window.addEventListener('touchend', onValueTouchEnd)
+  window.addEventListener('touchcancel', onValueTouchEnd)
+}
+
+function onValueTouchMove(e: TouchEvent) {
+  const state = touchAdjustState.value
+  if (!state) return
+  const touch = e.touches[0]
+  if (!touch) return
+  const dy = state.startY - touch.clientY
+  if (!state.active) {
+    if (Math.abs(dy) > 8) onValueTouchEnd()
+    return
+  }
+  e.preventDefault()
+  const nextValue = Math.max(0, Math.min(100, Math.round(state.startVal + dy * 0.6)))
+  const arr = [...ratios.value]
+  arr[state.hour] = nextValue
+  patch({ hourly_ratios: arr })
+}
+
+function onValueTouchEnd() {
+  const wasActive = touchAdjustState.value?.active
+  clearTouchAdjustTimer()
+  touchAdjustState.value = null
+  document.body.classList.remove('sched-dragging')
+  window.removeEventListener('touchmove', onValueTouchMove)
+  window.removeEventListener('touchend', onValueTouchEnd)
+  window.removeEventListener('touchcancel', onValueTouchEnd)
+  if (wasActive) suppressValueClickUntil = Date.now() + 350
 }
 
 // ===== presets =====
@@ -344,12 +425,18 @@ function onDocClick(e: MouseEvent) {
     commitEdit()
   }
 }
-onMounted(() => document.addEventListener('mousedown', onDocClick))
+onMounted(() => {
+  updateCompactViewport()
+  window.addEventListener('resize', updateCompactViewport)
+  document.addEventListener('mousedown', onDocClick)
+})
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateCompactViewport)
   document.removeEventListener('mousedown', onDocClick)
   onWeekdayPointerEnd()
   onBinaryPaintEnd()
   onBinaryTouchEnd()
+  onValueTouchEnd()
 })
 </script>
 
@@ -360,7 +447,8 @@ onBeforeUnmount(() => {
     :style="{
       '--accent': `rgb(${palette.rgb})`,
       '--accent-soft': `rgba(${palette.rgb}, 0.1)`,
-      '--accent-border': `rgba(${palette.rgb}, 0.25)`
+      '--accent-border': `rgba(${palette.rgb}, 0.25)`,
+      '--accent-rgb': palette.rgb
     }"
   >
     <!-- header -->
@@ -371,11 +459,11 @@ onBeforeUnmount(() => {
         </div>
         <div class="sched-title-block">
           <input v-model="nameField" class="sched-name-input" :placeholder="`时间表 ${(props.index ?? 0) + 1}`" />
-          <div class="sched-type-tag">{{ palette.tagZh }}时间表</div>
+          <div class="sched-type-tag">{{ props.paramLabel || palette.tagZh }}时间表</div>
         </div>
       </div>
       <div class="sched-header-actions">
-        <div class="toolbar toolbar--header">
+        <div v-if="!isCompactViewport" class="toolbar toolbar--header">
           <div class="tb-preset-row tb-preset-row--primary">
             <span class="tb-label">快捷预设</span>
             <button type="button" class="tb-btn" @click="presetOffice9to18">
@@ -403,6 +491,8 @@ onBeforeUnmount(() => {
       show-icon
       class="conflict-alert"
     />
+
+    <slot name="before-meta" />
 
     <!-- date / weekday -->
     <div class="meta-row-wrap">
@@ -448,11 +538,25 @@ onBeforeUnmount(() => {
     </div>
     </div>
 
+    <div v-if="isCompactViewport" class="toolbar toolbar--mobile-presets">
+      <div class="tb-preset-row tb-preset-row--primary">
+        <span class="tb-label">快捷预设</span>
+        <button type="button" class="tb-btn" @click="presetOffice9to18">
+          <el-icon :size="12"><MagicStick /></el-icon>办公9-18时
+        </button>
+      </div>
+      <div class="tb-preset-row tb-preset-row--secondary">
+        <button type="button" class="tb-btn" @click="presetAlwaysOn">全天</button>
+        <button type="button" class="tb-btn" @click="presetNight">夜间</button>
+        <button type="button" class="tb-btn tb-btn-danger" @click="presetClear">清空</button>
+      </div>
+    </div>
+
     <!-- heatmap with always-on top values (numbers are click-to-edit) -->
     <div class="time-row">
       <div class="meta-label">时刻</div>
       <div class="heatmap-wrap" :class="{ 'is-binary': isBinary }">
-      <div class="hm-values" v-if="!isBinary">
+      <div class="hm-values" v-if="!isBinary && !isCompactViewport">
         <template v-for="(val, h) in ratios" :key="`v-${h}`">
           <div
             v-if="editingHour === h"
@@ -485,14 +589,33 @@ onBeforeUnmount(() => {
           v-for="(val, h) in ratios"
           :key="h"
           class="hm-cell"
-          :class="{ 'is-zero': val === 0, 'is-on': isBinary && val >= 50 }"
+          :class="{ 'is-zero': val === 0, 'is-on': isBinary && val >= 50, 'is-editing': editingHour === h, 'is-touch-adjusting': touchAdjustState?.active && touchAdjustState.hour === h }"
           :style="cellStyle(h, val)"
           :data-hour="h"
+          :data-value="Math.round(val)"
           @mousedown="isBinary ? onBinaryMouseDown($event, h) : onCellMouseDown($event, h)"
-          @touchstart="isBinary ? onBinaryTouchStart($event, h) : undefined"
+          @touchstart="isBinary ? onBinaryTouchStart($event, h) : onValueTouchStart($event, h)"
+          @click.stop="!isBinary && onValueCellClick(h)"
           @dblclick="!isBinary && onCellDblClick(h)"
-          :title="isBinary ? '点击切换开关，按住拖动批量设置' : '上下拖动调整数值'"
-        ></div>
+          :title="isBinary ? '点击切换开关，按住拖动批量设置' : '长按后上下滑动调整数值'"
+        >
+          <div v-if="!isBinary && isCompactViewport && editingHour === h" class="hm-edit-pop hm-edit-pop-cell" @click.stop @mousedown.stop @touchstart.stop>
+            <input
+              ref="editingInputRef"
+              type="number"
+              min="0"
+              max="100"
+              v-model.number="editingValue"
+              class="hm-edit-input"
+              @keydown.enter.prevent="commitEdit"
+              @keydown.esc.prevent="cancelEdit"
+              @blur="commitEdit"
+              @click.stop
+              @touchstart.stop
+            />
+            <span class="hm-edit-suffix">%</span>
+          </div>
+        </div>
       </div>
       <div class="hm-ticks">
         <span v-for="t in tickHours" :key="t" class="hm-tick" :style="{ gridColumn: `${t + 1} / span 1` }">{{ t }}时</span>
@@ -501,7 +624,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="sched-foot" v-if="!isBinary">
-      点击上方数字编辑 · 上下拖动柱子调整 · 双击柱子归零
+      {{ isValueTouchAdjusting ? '上下滑动调整数值 · 松手确认' : '长按矩形调值 · 点击数字精确编辑 · 双击矩形归零' }}
     </div>
     <div class="sched-foot" v-else>
       点击切换开关 · 按住拖动批量设置
@@ -773,6 +896,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   text-align: center;
+  appearance: textfield;
   -moz-appearance: textfield;
 }
 .hm-edit-input-inline::-webkit-outer-spin-button,
@@ -812,6 +936,35 @@ onBeforeUnmount(() => {
 .hm-cell:hover {
   filter: brightness(1.05);
 }
+.hm-cell.is-touch-adjusting {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.16), 0 8px 18px rgba(var(--accent-rgb), 0.18);
+  z-index: 2;
+}
+.hm-cell.is-touch-adjusting::before {
+  content: '上下滑动';
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(var(--accent-rgb), 0.24);
+  pointer-events: none;
+}
+.hm-cell.is-touch-adjusting::after {
+  color: #ffffff;
+}
+.hm-cell.is-editing::after {
+  display: none;
+}
 .hm-cell.is-zero {
   background: transparent;
   border: 1px dashed #e4e4e7;
@@ -849,6 +1002,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   text-align: center;
+  appearance: textfield;
   -moz-appearance: textfield;
 }
 .hm-edit-input::-webkit-outer-spin-button,
@@ -860,6 +1014,9 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-weight: 700;
   color: #18181b;
+}
+.hm-edit-pop-cell {
+  display: none;
 }
 .hm-ticks {
   display: grid;
@@ -894,6 +1051,9 @@ body.sched-dragging * {
   border-top: 0;
   gap: 6px;
   flex-wrap: nowrap;
+}
+.toolbar--mobile-presets {
+  display: none;
 }
 .tb-preset-row {
   display: contents;
@@ -973,6 +1133,7 @@ body.sched-dragging * {
   padding: 5px 6px;
   border-radius: 6px;
   outline: none;
+  appearance: textfield;
   -moz-appearance: textfield;
 }
 .tb-input::-webkit-outer-spin-button,
@@ -998,41 +1159,67 @@ body.sched-dragging * {
 
 @media (max-width: 900px) {
   .sched-card {
-    padding: 14px;
-    gap: 14px;
+    position: relative;
+    padding: 12px;
+    gap: 12px;
     border-radius: 12px;
   }
   .sched-header {
-    gap: 10px;
+    align-items: flex-start;
+    gap: 8px;
   }
   .sched-header-left {
-    flex: 1 1 150px;
+    flex: 1 1 auto;
+    gap: 8px;
+    padding-right: 34px;
+  }
+  .type-badge {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+  }
+  .sched-title-block {
+    flex: 1 1 auto;
+    width: auto;
+  }
+  .sched-name-input {
+    width: 100%;
+  }
+  .sched-type-tag {
+    display: none;
   }
   .sched-header-actions {
-    flex: 0 0 auto;
-    justify-content: flex-end;
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    margin-left: 40px;
     max-width: 100%;
+  }
+  .sched-header-actions .del-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
   }
   .toolbar--header {
     gap: 4px;
     flex-direction: column;
-    align-items: flex-end;
+    align-items: flex-start;
     flex-wrap: nowrap;
-    justify-content: flex-end;
+    justify-content: flex-start;
     overflow: visible;
-    width: max-content;
+    width: 100%;
     max-width: 100%;
   }
   .toolbar--header .tb-preset-row {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: 4px;
-    width: auto;
+    width: 100%;
     min-width: 0;
+    flex-wrap: wrap;
   }
   .toolbar--header .tb-preset-row--secondary {
-    align-self: flex-end;
+    align-self: flex-start;
   }
   .toolbar--header .tb-label {
     flex: 0 0 auto;
@@ -1043,12 +1230,37 @@ body.sched-dragging * {
     padding: 5px 7px;
     line-height: 1.2;
   }
+  .toolbar--mobile-presets {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding-top: 0;
+    border-top: 0;
+    margin-top: -2px;
+  }
+  .toolbar--mobile-presets .tb-preset-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .toolbar--mobile-presets .tb-preset-row--secondary {
+    margin-left: 0;
+  }
+  .toolbar--mobile-presets .tb-label {
+    white-space: nowrap;
+  }
+  .toolbar--mobile-presets .tb-btn {
+    padding: 5px 7px;
+    line-height: 1.2;
+  }
   .meta-row-wrap {
     gap: 10px;
   }
   .time-row {
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 10px;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 8px;
   }
   .meta-row {
     width: 100%;
@@ -1061,6 +1273,10 @@ body.sched-dragging * {
   .meta-cascader {
     width: 108px;
     min-width: 0;
+  }
+  .heatmap-wrap {
+    overflow-x: visible;
+    padding-bottom: 0;
   }
   .heatmap-wrap.is-binary .heatmap-row {
     grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -1083,16 +1299,8 @@ body.sched-dragging * {
   .heatmap-wrap.is-binary .hm-cell.is-on::after {
     color: #ffffff;
   }
-  .heatmap-wrap.is-binary .hm-ticks {
-    display: none;
-  }
   .heatmap-wrap:not(.is-binary) .hm-values {
-    grid-template-columns: repeat(12, minmax(0, 1fr));
-    height: auto;
-    gap: 4px;
-  }
-  .heatmap-wrap:not(.is-binary) .hm-value {
-    min-height: 22px;
+    display: none;
   }
   .heatmap-wrap:not(.is-binary) .heatmap-row {
     grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -1100,23 +1308,48 @@ body.sched-dragging * {
     gap: 4px;
   }
   .heatmap-wrap:not(.is-binary) .hm-cell {
-    height: 34px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border: 1px dashed #e4e4e7;
   }
-  .heatmap-wrap:not(.is-binary) .hm-ticks {
+  .heatmap-wrap:not(.is-binary) .hm-cell::after {
+    content: attr(data-value);
+    color: #71717a;
+    font-size: 12px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .heatmap-wrap:not(.is-binary) .hm-cell:not(.is-zero)::after {
+    color: #ffffff;
+  }
+  .heatmap-wrap:not(.is-binary) .hm-cell.is-editing::after {
+    display: none;
+  }
+  .heatmap-wrap:not(.is-binary) .hm-edit-pop {
+    bottom: 50%;
+    transform: translate(-50%, 50%);
+  }
+  .heatmap-wrap:not(.is-binary) .hm-edit-pop-cell {
+    display: flex;
+  }
+  .heatmap-wrap:not(.is-binary) .hm-edit-pop::after {
+    display: none;
+  }
+  .hm-ticks {
     display: none;
   }
 }
 
 @media (max-width: 420px) {
-  .heatmap-wrap.is-binary .heatmap-row {
-    grid-template-columns: repeat(8, minmax(0, 1fr));
-  }
-  .heatmap-wrap:not(.is-binary) .hm-values,
+  .heatmap-wrap.is-binary .heatmap-row,
   .heatmap-wrap:not(.is-binary) .heatmap-row {
     grid-template-columns: repeat(8, minmax(0, 1fr));
   }
   .heatmap-wrap:not(.is-binary) .hm-cell {
-    height: 32px;
+    height: 34px;
   }
 }
 
@@ -1134,11 +1367,7 @@ body.sched-dragging * {
 }
 </style>
 
-<!-- popper styles for el-select dropdown (dark) -->
 <style>
-.el-select__popper.el-popper {
-  /* keep default light dropdown for legibility unless we want full dark */
-}
 .sched-card .meta-cascader .el-input,
 .sched-card .meta-cascader .el-input__wrapper,
 .sched-card .meta-cascader .el-input__inner {

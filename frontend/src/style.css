@@ -143,6 +143,20 @@
   --motion-slow:   320ms;
   --easing-standard: cubic-bezier(0.4, 0, 0.2, 1);
 
+  /* ---- Button interaction tokens ---- */
+  --button-radius: var(--radius-md);
+  --button-circle-radius: var(--radius-pill);
+  --button-shadow: none;
+  --button-hover-shadow: none;
+  --button-focus-shadow: var(--shadow-focus);
+  --button-press-scale: 0.97;
+  --button-transition: transform var(--motion-fast) var(--easing-standard),
+    background-color var(--motion-fast) var(--easing-standard),
+    border-color var(--motion-fast) var(--easing-standard),
+    color var(--motion-fast) var(--easing-standard),
+    box-shadow var(--motion-fast) var(--easing-standard);
+  --button-tap-highlight: transparent;
+
   /* ---- Scheme editor field layout ---- */
   --scheme-field-width: 280px;
   --scheme-control-width: 150px;
@@ -324,9 +338,34 @@ body {
   border-radius: 6px;
 }
 
-/* Improved button roundness */
+/* Unified Element Plus button interaction */
 .el-button {
-  border-radius: 8px;
+  border-radius: var(--button-radius) !important;
+  box-shadow: var(--button-shadow) !important;
+  transition: var(--button-transition) !important;
+  -webkit-tap-highlight-color: var(--button-tap-highlight);
+  touch-action: manipulation;
+}
+
+.el-button.is-circle {
+  border-radius: var(--button-circle-radius) !important;
+}
+
+.el-button:hover {
+  box-shadow: var(--button-hover-shadow) !important;
+}
+
+.el-button:focus:not(:focus-visible) {
+  box-shadow: var(--button-shadow) !important;
+}
+
+.el-button:focus-visible {
+  outline: none !important;
+  box-shadow: var(--button-focus-shadow) !important;
+}
+
+.el-button:active:not(.is-disabled) {
+  transform: scale(var(--button-press-scale));
 }
 
 html[data-theme='dark'] {

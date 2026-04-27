@@ -118,6 +118,7 @@ function applyPreset(presetKey: string) {
   if (!preset) return
   const z = activeZone.value
   if (!z) return
+  z.name = t(`building.zone.presets.${presetKey}`)
   // Apply envelope
   z.floor_height = preset.floor_height
   z.wall_u_value = preset.wall_u_value
@@ -135,6 +136,8 @@ function applyPreset(presetKey: string) {
   if (preset.relative_humidity) z.relative_humidity = deepCopyParam(preset.relative_humidity)
   // Track selected preset
   activePresetKey.value = presetKey
+  markDirty()
+  queueConflictCheck()
   ElMessage.success(`${t(`building.zone.presets.${presetKey}`)} ✓`)
 }
 
@@ -187,6 +190,8 @@ function addScheduleForParam(param: ParamConfig) {
     return
   }
   param.schedules.push(createRatiosSchedule(t('building.schedule.dayGroupName') + ' ' + (param.schedules.length + 1)))
+  markDirty()
+  queueConflictCheck()
 }
 
 function removeScheduleAt(param: ParamConfig, idx: number) {
@@ -195,55 +200,92 @@ function removeScheduleAt(param: ParamConfig, idx: number) {
     // Always keep at least one — re-add a default
     param.schedules.push(createOfficeRatiosSchedule(t('building.schedule.presetWeekday')))
   }
+  markDirty()
+  queueConflictCheck()
 }
 
-function addDayGroup(param: ParamConfig) {
-  if (param.schedules.length >= MAX_SCHEDULES) {
-    ElMessage.warning(t('building.schedule.maxGroupsHint', { max: MAX_SCHEDULES }))
-    return
+function ensureScheduledParam(param: ParamConfig): ParamConfig {
+  param.mode = 'scheduled'
+  if (param.schedules.length === 0) param.schedules.push(createSchedule(param.fixed_value))
+  return param
+}
+
+function getSetpointParam(zone: BuildingZone, key: string): ParamConfig {
+  return ensureScheduledParam(getParam(zone, key))
+}
+
+function copyScheduleMeta(source: DaySchedule, target: DaySchedule) {
+  target.name = source.name
+  target.start_month = source.start_month
+  target.start_day = source.start_day
+  target.end_month = source.end_month
+  target.end_day = source.end_day
+  target.days = [...source.days]
+  target.hours = [...source.hours]
+}
+
+function getCombinedSetpointParams(zone: BuildingZone) {
+  const temperature = getSetpointParam(zone, 'temperature')
+  const humidity = getSetpointParam(zone, 'relative_humidity')
+  const count = Math.max(1, temperature.schedules.length, humidity.schedules.length)
+  while (temperature.schedules.length < count) temperature.schedules.push(createSchedule(temperature.fixed_value))
+  while (humidity.schedules.length < count) humidity.schedules.push(createSchedule(humidity.fixed_value))
+  temperature.schedules.forEach((schedule, index) => copyScheduleMeta(schedule, humidity.schedules[index]))
+  return { temperature, humidity, relative_humidity: humidity }
+}
+
+function addCombinedSetpointSchedule(zone: BuildingZone) {
+  const { temperature, humidity } = getCombinedSetpointParams(zone)
+  if (temperature.schedules.length >= MAX_SCHEDULES) return
+  temperature.schedules.push(createSchedule(temperature.fixed_value))
+  humidity.schedules.push(createSchedule(humidity.fixed_value))
+  markDirty()
+  queueConflictCheck()
+}
+
+function removeCombinedSetpointSchedule(zone: BuildingZone, index: number) {
+  const { temperature, humidity } = getCombinedSetpointParams(zone)
+  temperature.schedules.splice(index, 1)
+  humidity.schedules.splice(index, 1)
+  if (temperature.schedules.length === 0) {
+    temperature.schedules.push(createSchedule(temperature.fixed_value))
+    humidity.schedules.push(createSchedule(humidity.fixed_value))
   }
-  param.schedules.push(createSchedule(param.fixed_value))
+  markDirty()
+  queueConflictCheck()
 }
 
-function removeDayGroup(param: ParamConfig, idx: number) {
-  param.schedules.splice(idx, 1)
-  if (param.schedules.length === 0) param.mode = 'fixed'
-}
-
-function presetWeekday(param: ParamConfig) {
-  param.schedules = [
-    createSchedule(param.fixed_value, t('building.schedule.presetWeekday'), [1, 2, 3, 4, 5], [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]),
-    createSchedule(param.fixed_value * 0.3, t('building.schedule.presetWeekend'), [6, 7], [10, 11, 12, 13, 14, 15]),
-  ]
-}
-
-function switchMode(param: ParamConfig, mode: string | number | boolean | undefined) {
-  const m = String(mode) as 'fixed' | 'scheduled'
-  param.mode = m
-  if (m === 'scheduled' && param.schedules.length === 0) {
-    presetWeekday(param)
+function normalizeScheduleHours(schedule: DaySchedule): DaySchedule {
+  if (Array.isArray(schedule.hourly_ratios) && schedule.hourly_ratios.length === 24) {
+    schedule.hours = schedule.hourly_ratios
+      .map((value, hour) => value >= 50 ? hour : -1)
+      .filter(hour => hour >= 0)
   }
+  return schedule
 }
 
-// Quick hour range toggle
-function toggleHourRange(sch: DaySchedule, start: number, end: number) {
-  const range = Array.from({ length: end - start }, (_, i) => start + i)
-  const allSelected = range.every(h => sch.hours.includes(h))
-  if (allSelected) {
-    sch.hours = sch.hours.filter(h => h < start || h >= end)
-  } else {
-    const set = new Set(sch.hours)
-    range.forEach(h => set.add(h))
-    sch.hours = Array.from(set).sort((a, b) => a - b)
-  }
+function updateCombinedSetpointSchedule(zone: BuildingZone, index: number, value: DaySchedule) {
+  const { temperature, humidity } = getCombinedSetpointParams(zone)
+  const next = normalizeScheduleHours({ ...value, value: temperature.schedules[index].value })
+  temperature.schedules[index] = next
+  copyScheduleMeta(next, humidity.schedules[index])
+  markDirty()
+  queueConflictCheck()
 }
 
-function selectAllHours(sch: DaySchedule) {
-  sch.hours = Array.from({ length: 24 }, (_, i) => i)
+function updateCombinedSetpointValue(zone: BuildingZone, index: number, key: 'temperature' | 'relative_humidity', value: number | undefined) {
+  if (value === undefined) return
+  const params = getCombinedSetpointParams(zone)
+  params[key].schedules[index].value = value
+  params[key].fixed_value = value
+  markDirty()
+  queueConflictCheck()
 }
 
-function clearAllHours(sch: DaySchedule) {
-  sch.hours = []
+function updateScheduleAt(param: ParamConfig, index: number, value: DaySchedule) {
+  param.schedules[index] = value
+  markDirty()
+  queueConflictCheck()
 }
 
 // ----- Conflict detection -----
@@ -361,10 +403,10 @@ function _checkConflicts() {
   hasAnyConflict.value = false
 }
 
-watch(editZones, () => {
+function queueConflictCheck() {
   if (_conflictTimer) clearTimeout(_conflictTimer)
   _conflictTimer = setTimeout(_checkConflicts, 500)
-}, { deep: true })
+}
 
 // ----- Unsaved changes detection (version-based) -----
 const editVersion = ref(0)
@@ -377,75 +419,200 @@ function markDirty() {
   editVersion.value++
 }
 
-// Use deep watcher only to bump version counter (cheap operation)
-let _dirtyTimer: ReturnType<typeof setTimeout> | null = null
-watch(editZones, () => {
-  if (_dirtyTimer) clearTimeout(_dirtyTimer)
-  _dirtyTimer = setTimeout(markDirty, 500)
-}, { deep: true })
-
-// ----- Zone table pagination -----
-const pageSize = ref(30)
-const currentPage = ref(1)
-
-const totalZones = computed(() => editZones.value.length)
-
-const pagedZones = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return editZones.value.slice(start, start + pageSize.value)
-})
-
-function handlePageChange(page: number) {
-  currentPage.value = page
+function handleZoneFormInput() {
+  markDirty()
 }
 
-function handleSizeChange(size: number) {
-  pageSize.value = size
-  currentPage.value = 1
+function handleZoneFormChange() {
+  markDirty()
+  queueConflictCheck()
 }
 
-// Ensure currentPage stays valid when zones are deleted
-watch(totalZones, (total) => {
-  const maxPage = Math.max(1, Math.ceil(total / pageSize.value))
-  if (currentPage.value > maxPage) currentPage.value = maxPage
+const zoneItems = computed(() => editZones.value.map((zone, index) => ({ zone, index })))
+const zoneListRef = ref<HTMLElement | null>(null)
+const zoneListScrollTop = ref(0)
+const zoneListHeight = ref(0)
+const zoneListWidth = ref(0)
+let zoneListResizeObserver: ResizeObserver | null = null
+const ZONE_GRID_OVERSCAN_ROWS = 4
+
+const zoneGridGap = computed(() => isMobile.value ? 8 : 12)
+const zoneCardOuterHeight = computed(() => (isMobile.value ? 44 : 54) + zoneGridGap.value)
+const zoneGridColumns = computed(() => {
+  if (isMobile.value) return 2
+  const minCardWidth = 260
+  return Math.max(1, Math.floor((zoneListWidth.value + zoneGridGap.value) / (minCardWidth + zoneGridGap.value)))
 })
+const totalZoneRows = computed(() => Math.ceil(zoneItems.value.length / zoneGridColumns.value))
+const firstVisibleZoneRow = computed(() => Math.max(0, Math.floor(zoneListScrollTop.value / zoneCardOuterHeight.value) - ZONE_GRID_OVERSCAN_ROWS))
+const visibleZoneRowCount = computed(() => Math.ceil(zoneListHeight.value / zoneCardOuterHeight.value) + ZONE_GRID_OVERSCAN_ROWS * 2)
+const lastVisibleZoneRow = computed(() => Math.min(totalZoneRows.value, firstVisibleZoneRow.value + visibleZoneRowCount.value))
+const visibleZoneItems = computed(() => {
+  const start = firstVisibleZoneRow.value * zoneGridColumns.value
+  const end = lastVisibleZoneRow.value * zoneGridColumns.value
+  return zoneItems.value.slice(start, end)
+})
+const zoneTopSpacerHeight = computed(() => firstVisibleZoneRow.value * zoneCardOuterHeight.value)
+const zoneBottomSpacerHeight = computed(() => Math.max(0, (totalZoneRows.value - lastVisibleZoneRow.value) * zoneCardOuterHeight.value))
+
+watch([isMobile, () => editZones.value.length], () => nextTick(updateZoneListMetrics))
+
+function updateZoneListMetrics() {
+  const el = zoneListRef.value
+  if (!el) return
+  zoneListHeight.value = el.clientHeight
+  zoneListWidth.value = el.clientWidth
+  zoneListScrollTop.value = el.scrollTop
+}
+
+function handleZoneListScroll() {
+  zoneListScrollTop.value = zoneListRef.value?.scrollTop || 0
+}
+
+function scrollZoneListToBottom() {
+  nextTick(() => {
+    const el = zoneListRef.value
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    updateZoneListMetrics()
+  })
+}
 
 // ----- Zone management -----
 const MAX_ZONES = 999 // 最大分区数
 const activeZone = computed(() => editZones.value[selectedZoneIdx.value] ?? null)
 
-function nextZoneNumber(): number {
-  const prefix = t('building.zone.defaultPrefix')
-  let max = 0
-  for (const z of editZones.value) {
-    if (z.name.startsWith(prefix)) {
-      const n = parseInt(z.name.slice(prefix.length).trim(), 10)
-      if (!isNaN(n) && n > max) max = n
-    }
-  }
-  return max + 1
-}
-
 // ----- Table selection for batch operations -----
 const selectedRows = ref<BuildingZone[]>([])
+const zoneSelectMode = ref(false)
 const batchAddVisible = ref(false)
 const batchAddCount = ref(3)
 const batchAddName = ref('')
+let syncingSelectedZones = false
+
+function cloneValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value))
+}
+
+const selectedZoneSet = computed(() => new Set(selectedRows.value))
 
 function isZoneSelected(zone: BuildingZone): boolean {
-  return selectedRows.value.includes(zone)
+  return selectedZoneSet.value.has(zone)
 }
 
 function toggleZoneSelect(zone: BuildingZone, checked: any) {
   if (checked) {
-    if (!selectedRows.value.includes(zone)) selectedRows.value.push(zone)
+    if (!isZoneSelected(zone)) selectedRows.value.push(zone)
+    handleRowClick(zone)
   } else {
     selectedRows.value = selectedRows.value.filter(z => z !== zone)
   }
 }
 
+function setZoneSelectMode(enabled: any) {
+  zoneSelectMode.value = Boolean(enabled)
+  if (!zoneSelectMode.value) selectedRows.value = []
+}
+
+function handleZoneCardClick(zone: BuildingZone) {
+  if (zoneSelectMode.value) {
+    toggleZoneSelect(zone, !isZoneSelected(zone))
+    return
+  }
+  handleRowClick(zone)
+}
+
+const isBatchDetailEditing = computed(() => {
+  const zone = activeZone.value
+  return zoneSelectMode.value && !!zone && selectedRows.value.length > 1 && selectedZoneSet.value.has(zone)
+})
+
+function syncZoneDetailSettings(source: BuildingZone, target: BuildingZone) {
+  target.name = source.name
+  target.area = source.area
+  target.floor_height = source.floor_height
+  target.zone_position = source.zone_position
+  target.wall_config = cloneValue(source.wall_config)
+  target.wall_u_value = source.wall_u_value
+  target.window_u_value = source.window_u_value
+  target.window_wall_ratio = source.window_wall_ratio
+  target.roof_u_value = source.roof_u_value
+  target.people_density = cloneValue(source.people_density)
+  target.people_heat_gain = source.people_heat_gain
+  target.lighting_density = cloneValue(source.lighting_density)
+  target.equipment_density = cloneValue(source.equipment_density)
+  target.fresh_air_volume = cloneValue(source.fresh_air_volume)
+  target.temperature = cloneValue(source.temperature)
+  target.relative_humidity = cloneValue(source.relative_humidity)
+}
+
+function detailEditTargets(): BuildingZone[] {
+  const zone = activeZone.value
+  if (!zone) return []
+  return isBatchDetailEditing.value ? selectedRows.value : [zone]
+}
+
+function getSharedValue<T>(getter: (zone: BuildingZone) => T): T | undefined {
+  const targets = detailEditTargets()
+  if (targets.length === 0) return undefined
+  const firstValue = getter(targets[0])
+  return targets.every(zone => getter(zone) === firstValue) ? firstValue : undefined
+}
+
+type EditableZoneField = 'name' | 'area' | 'floor_height' | 'zone_position'
+
+function getZoneFieldValue(field: EditableZoneField): string | number | ZonePosition | undefined {
+  return getSharedValue(zone => zone[field])
+}
+
+function setZoneFieldValue(field: EditableZoneField, value: string | number | ZonePosition | undefined) {
+  if (value === undefined) return
+  detailEditTargets().forEach(zone => {
+    ;(zone as any)[field] = value
+  })
+  markDirty()
+}
+
+function getDetailParamFixedValue(key: string): number | undefined {
+  return getSharedValue(zone => getParam(zone, key).fixed_value)
+}
+
+function setDetailParamFixedValue(key: string, value: number | undefined) {
+  if (value === undefined) return
+  detailEditTargets().forEach(zone => {
+    getParam(zone, key).fixed_value = value
+  })
+  markDirty()
+}
+
+function getPeopleHeatGainValue(): number | undefined {
+  return getSharedValue(zone => zone.people_heat_gain)
+}
+
+function setPeopleHeatGainValue(value: number | undefined) {
+  if (value === undefined) return
+  detailEditTargets().forEach(zone => {
+    zone.people_heat_gain = value
+  })
+  markDirty()
+}
+
+watch(activeZone, (source, previousSource) => {
+  if (!source || !isBatchDetailEditing.value || syncingSelectedZones) return
+  if (source !== previousSource) return
+  syncingSelectedZones = true
+  try {
+    selectedRows.value
+      .filter(target => target !== source)
+      .forEach(target => syncZoneDetailSettings(source, target))
+  } finally {
+    syncingSelectedZones = false
+  }
+}, { deep: true })
+
 const allPagedSelected = computed(() => {
-  return pagedZones.value.length > 0 && pagedZones.value.every(z => selectedRows.value.includes(z))
+  const selectedSet = selectedZoneSet.value
+  return editZones.value.length > 0 && editZones.value.every(zone => selectedSet.has(zone))
 })
 
 const someSelected = computed(() =>
@@ -455,11 +622,10 @@ const someSelected = computed(() =>
 function toggleAllPaged(checked: any) {
   if (checked) {
     const set = new Set(selectedRows.value)
-    pagedZones.value.forEach(z => set.add(z))
+    editZones.value.forEach(zone => set.add(zone))
     selectedRows.value = Array.from(set)
   } else {
-    const pset = new Set(pagedZones.value)
-    selectedRows.value = selectedRows.value.filter(z => !pset.has(z))
+    selectedRows.value = []
   }
 }
 
@@ -476,13 +642,12 @@ function addZone() {
     ElMessage.warning(t('building.zone.maxZonesHint', { max: MAX_ZONES }))
     return
   }
-  const name = `${t('building.zone.defaultPrefix')}${nextZoneNumber()}`
-  editZones.value.push(createDefaultZone(name))
+  editZones.value.push(createDefaultZone())
+  markDirty()
+  scrollZoneListToBottom()
   nextTick(() => {
     selectedZoneIdx.value = editZones.value.length - 1
     activePresetKey.value = ''
-    // Jump to last page to show the new zone
-    currentPage.value = Math.ceil(editZones.value.length / pageSize.value)
   })
 }
 
@@ -492,11 +657,11 @@ function copyZone(zone: BuildingZone) {
     return
   }
   const copy: BuildingZone = JSON.parse(JSON.stringify(zone))
-  copy.name = copy.name ? `${copy.name} (${t('building.zone.copy')})` : ''
   editZones.value.push(copy)
+  markDirty()
+  scrollZoneListToBottom()
   nextTick(() => {
     selectedZoneIdx.value = editZones.value.length - 1
-    currentPage.value = Math.ceil(editZones.value.length / pageSize.value)
   })
   ElMessage.success(t('building.zone.copySuccess'))
 }
@@ -509,6 +674,7 @@ function removeZone(zone: BuildingZone) {
   const idx = editZones.value.indexOf(zone)
   if (idx < 0) return
   editZones.value.splice(idx, 1)
+  markDirty()
   if (selectedZoneIdx.value >= editZones.value.length) {
     selectedZoneIdx.value = editZones.value.length - 1
   }
@@ -528,6 +694,7 @@ async function batchDelete() {
   editZones.value = editZones.value.filter(z => !toRemove.has(z))
   selectedZoneIdx.value = Math.min(selectedZoneIdx.value, editZones.value.length - 1)
   selectedRows.value = []
+  markDirty()
 }
 
 function batchCopy() {
@@ -540,12 +707,11 @@ function batchCopy() {
   const toCopy = selectedRows.value.slice(0, remaining)
   const copies = toCopy.map(z => {
     const copy: BuildingZone = JSON.parse(JSON.stringify(z))
-    copy.name = copy.name ? `${copy.name} (${t('building.zone.copy')})` : ''
     return copy
   })
   editZones.value.push(...copies)
-  // Jump to last page to show copied zones
-  currentPage.value = Math.ceil(editZones.value.length / pageSize.value)
+  markDirty()
+  scrollZoneListToBottom()
   ElMessage.success(t('building.zone.batchCopySuccess', { count: copies.length }))
 }
 
@@ -556,20 +722,14 @@ function confirmBatchAdd() {
     return
   }
   const count = Math.max(1, Math.min(batchAddCount.value, 200, remaining))
-  const prefix = batchAddName.value || t('building.zone.defaultPrefix')
-  let num = 1
-  if (!batchAddName.value) {
-    num = nextZoneNumber()
-  }
+  const nicknamePrefix = batchAddName.value.trim()
   for (let i = 0; i < count; i++) {
-    const name = batchAddName.value
-      ? `${batchAddName.value} ${editZones.value.length + 1}`
-      : `${prefix}${num + i}`
+    const name = nicknamePrefix ? `${nicknamePrefix} ${editZones.value.length + 1}` : ''
     editZones.value.push(createDefaultZone(name))
   }
+  markDirty()
+  scrollZoneListToBottom()
   batchAddVisible.value = false
-  // Jump to last page to show newly added zones
-  currentPage.value = Math.ceil(editZones.value.length / pageSize.value)
   ElMessage.success(t('building.zone.batchAddSuccess', { count }))
 }
 
@@ -598,6 +758,11 @@ function normalizeSchedule(raw: any): DaySchedule {
   return createSchedule(0, raw.name || '')
 }
 
+
+function normalizeZoneNickname(rawName: any): string {
+  const name = String(rawName || '').trim()
+  return /^(分区|Zone)\s*\d+$/i.test(name) ? '' : name
+}
 function normalizeZone(raw: any): BuildingZone {
   const toParam = (val: any, fallback: number): ParamConfig => {
     if (val && typeof val === 'object' && 'mode' in val) {
@@ -611,7 +776,7 @@ function normalizeZone(raw: any): BuildingZone {
   }
   const defaultWallCfg: WallConfig = { south_exterior: true, north_exterior: true, east_exterior: true, west_exterior: true }
   return {
-    name: raw.name || '',
+    name: normalizeZoneNickname(raw.name),
     area: raw.area || 0,
     floor_height: raw.floor_height ?? 3.5,
     zone_position: raw.zone_position ?? 'single',
@@ -641,7 +806,7 @@ onMounted(async () => {
   } else {
     const ep = data.envelope_params || {}
     editZones.value = [{
-      name: t('building.zone.presets.office'),
+      name: '',
       area: data.total_area || 0,
       floor_height: 3.5,
       zone_position: 'single' as ZonePosition,
@@ -664,7 +829,13 @@ onMounted(async () => {
       normalizeInternalGainParam((z as any)[k])
     }
   }
+  _checkConflicts()
   nextTick(() => {
+    updateZoneListMetrics()
+    if (zoneListRef.value) {
+      zoneListResizeObserver = new ResizeObserver(updateZoneListMetrics)
+      zoneListResizeObserver.observe(zoneListRef.value)
+    }
     savedVersion.value = editVersion.value
     // Allow dirty detection after initial load settles (debounce is 500ms)
     setTimeout(() => { _initializing.value = false }, 600)
@@ -728,7 +899,6 @@ async function handleSave() {
     building.value = data
     ElMessage.success(t('building.updateSuccess'))
     savedVersion.value = editVersion.value
-    if (_dirtyTimer) { clearTimeout(_dirtyTimer); _dirtyTimer = null }
   } finally {
     saving.value = false
   }
@@ -757,36 +927,45 @@ onBeforeRouteLeave(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
+  zoneListResizeObserver?.disconnect()
+  zoneListResizeObserver = null
 })
 
-// ----- Constants -----
-const ALL_HOURS = Array.from({ length: 24 }, (_, i) => i)
-const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 6: 30, 7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31 }
 </script>
 
 <template>
   <div class="building-view" v-if="building">
     <Teleport v-if="isMobile" to="#ws-mobile-topbar-slot" defer>
       <div class="building-mobile-topbar">
-        <button class="building-mb-back" :aria-label="t('workspace.backToProjects') || '返回'" @click="goBackToList">
-          <el-icon :size="20">
-            <ArrowLeft />
-          </el-icon>
-        </button>
-        <div class="building-mb-spacer" />
-        <el-tag type="success" effect="plain" size="small" class="building-mb-area">{{ totalArea.toFixed(1) }}
-          m²</el-tag>
-        <el-badge is-dot :hidden="!isDirty" type="danger" class="building-mb-save-badge">
-          <button class="building-mb-save" :disabled="saving || hasAnyConflict" :aria-label="t('common.save')"
-            @click="handleSave">
-            <el-icon v-if="!saving" :size="16">
-              <FolderChecked />
-            </el-icon>
-            <el-icon v-else :size="16" class="is-loading">
-              <Setting />
+        <div class="building-mb-left">
+          <button class="building-mb-back" :aria-label="t('workspace.backToProjects') || '返回'" @click="goBackToList">
+            <el-icon :size="20">
+              <ArrowLeft />
             </el-icon>
           </button>
-        </el-badge>
+          <span class="building-mb-area">{{ totalArea.toFixed(1) }} m²</span>
+        </div>
+        <div class="building-mb-title">{{ t('building.zone.title') }} ({{ editZones.length }})</div>
+        <div class="building-mb-actions">
+          <button class="building-mb-icon-btn" :aria-label="t('building.zone.add')" @click="addZone">
+            <el-icon :size="16"><Plus /></el-icon>
+          </button>
+          <button v-if="zoneSelectMode" class="building-mb-icon-btn building-mb-icon-btn--danger" :disabled="selectedRows.length === 0"
+            :aria-label="t('building.zone.batchDelete')" @click="batchDelete">
+            <el-icon :size="16"><Delete /></el-icon>
+          </button>
+          <el-badge is-dot :hidden="!isDirty" type="danger" class="building-mb-save-badge">
+            <button class="building-mb-save" :disabled="saving || hasAnyConflict" :aria-label="t('common.save')"
+              @click="handleSave">
+              <el-icon v-if="!saving" :size="16">
+                <FolderChecked />
+              </el-icon>
+              <el-icon v-else :size="16" class="is-loading">
+                <Setting />
+              </el-icon>
+            </button>
+          </el-badge>
+        </div>
       </div>
     </Teleport>
 
@@ -806,7 +985,7 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
 
     <!-- Zone table + batch toolbar -->
     <el-card class="zone-table-card" shadow="never">
-      <template #header>
+      <template v-if="!isMobile" #header>
         <div class="zone-table-header">
           <span class="zone-table-title">{{ t('building.zone.title') }} ({{ editZones.length }})</span>
           <div class="zone-table-actions">
@@ -816,10 +995,10 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
             <el-button :icon="FolderAdd" size="small" @click="batchAddVisible = true">
               <span v-if="!isMobile">{{ t('building.zone.batchAdd') }}</span>
             </el-button>
-            <el-button :icon="CopyDocument" size="small" :disabled="selectedRows.length === 0" @click="batchCopy">
+            <el-button v-if="zoneSelectMode" :icon="CopyDocument" size="small" :disabled="selectedRows.length === 0" @click="batchCopy">
               <span v-if="!isMobile">{{ t('building.zone.batchCopy') }}</span>
             </el-button>
-            <el-button type="danger" :icon="Delete" size="small" plain :disabled="selectedRows.length === 0"
+            <el-button v-if="zoneSelectMode" type="danger" :icon="Delete" size="small" plain :disabled="selectedRows.length === 0"
               @click="batchDelete">
               <span v-if="!isMobile">{{ t('building.zone.batchDelete') }}</span>
             </el-button>
@@ -827,58 +1006,42 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
         </div>
       </template>
 
-      <div class="zone-grid">
+      <div class="zone-grid" :class="{ 'is-zone-select-mode': zoneSelectMode }">
         <div class="zone-grid-toolbar">
-          <el-checkbox :model-value="allPagedSelected" :indeterminate="someSelected"
+          <el-switch :model-value="zoneSelectMode" :active-text="t('building.zone.selectMode')"
+            @change="setZoneSelectMode" />
+          <el-checkbox v-if="zoneSelectMode" :model-value="allPagedSelected" :indeterminate="someSelected"
             @change="(v: any) => toggleAllPaged(v)">
             {{ t('common.selectAll') }}
-            <span v-if="selectedRows.length > 0" class="zg-sel-count">({{ selectedRows.length }})</span>
           </el-checkbox>
+          <span v-if="zoneSelectMode && selectedRows.length > 0" class="zg-sel-count">
+            {{ t('building.zone.selectedCount', { count: selectedRows.length }) }}
+          </span>
         </div>
-        <div class="zone-grid-list">
-          <div v-for="(zone, idx) in pagedZones" :key="editZones.indexOf(zone)" class="zone-mini-card"
-            :class="{ active: editZones.indexOf(zone) === selectedZoneIdx, selected: isZoneSelected(zone) }"
-            @click="handleRowClick(zone)">
-            <div class="zmc-header" @click.stop>
-              <el-checkbox :model-value="isZoneSelected(zone)" @change="(v: any) => toggleZoneSelect(zone, v)" />
-              <span class="zmc-num">#{{ (currentPage - 1) * pageSize + idx + 1 }}</span>
-              <el-input v-model="zone.name" size="small" class="zmc-name"
-                :placeholder="t('building.zone.pleaseInputName')" />
-              <div class="zmc-actions">
-                <el-button text circle type="primary" size="small" :icon="CopyDocument" :title="t('building.zone.copy')"
-                  @click="copyZone(zone)" />
-                <el-button text circle type="danger" size="small" :icon="Delete" :disabled="editZones.length <= 1"
-                  :title="t('building.zone.delete')" @click="removeZone(zone)" />
-              </div>
-            </div>
-            <div class="zmc-body" @click.stop>
-              <div class="zmc-field">
-                <label>{{ t('building.zone.area') }}</label>
-                <el-input-number v-model="zone.area" :min="0.1" :max="9999.9" :precision="1" size="small"
-                  :controls="false" class="zmc-number" />
-              </div>
-              <div class="zmc-field">
-                <label>{{ t('building.zone.floorHeight') }}</label>
-                <el-input-number v-model="zone.floor_height" :min="1" :max="100" :precision="1" size="small"
-                  :controls="false" class="zmc-number" />
-              </div>
-              <div class="zmc-field zmc-field--full">
-                <label>{{ t('building.envelope.zonePosition') }}</label>
-                <el-select v-model="zone.zone_position" size="small" class="zmc-select">
-                  <el-option value="single" :label="t('building.envelope.position.single')" />
-                  <el-option value="top" :label="t('building.envelope.position.top')" />
-                  <el-option value="middle" :label="t('building.envelope.position.middle')" />
-                  <el-option value="bottom" :label="t('building.envelope.position.bottom')" />
-                </el-select>
+        <div ref="zoneListRef" class="zone-grid-scroll" @scroll="handleZoneListScroll">
+          <div :style="{ height: `${zoneTopSpacerHeight}px` }" />
+          <div class="zone-grid-list">
+            <div v-for="item in visibleZoneItems" :key="item.index" class="zone-mini-card"
+              :class="{ active: item.index === selectedZoneIdx, selected: zoneSelectMode && isZoneSelected(item.zone) }"
+              @click="handleZoneCardClick(item.zone)">
+              <div class="zmc-header">
+                <el-checkbox v-if="zoneSelectMode" :model-value="isZoneSelected(item.zone)" @click.stop
+                  @change="(v: any) => toggleZoneSelect(item.zone, v)" />
+                <span class="zmc-num">#{{ item.index + 1 }}</span>
+                <span class="zmc-area">{{ (item.zone.area || 0).toFixed(1) }} m²</span>
+                <span v-if="item.zone.name && (!isMobile || zoneSelectMode)" class="zmc-nickname" :title="item.zone.name">{{ item.zone.name }}</span>
+                <div v-if="!zoneSelectMode" class="zmc-actions" @click.stop>
+                  <el-button class="bv-action-btn zmc-action-btn" text circle type="primary" size="small" :icon="CopyDocument" :title="t('building.zone.copy')"
+                    @click="copyZone(item.zone)" />
+                  <el-button class="bv-action-btn zmc-action-btn" text circle type="danger" size="small" :icon="Delete" :disabled="editZones.length <= 1"
+                    :title="t('building.zone.delete')" @click="removeZone(item.zone)" />
+                </div>
               </div>
             </div>
           </div>
+          <div :style="{ height: `${zoneBottomSpacerHeight}px` }" />
         </div>
       </div>
-      <el-pagination v-if="totalZones > 30" v-model:current-page="currentPage" v-model:page-size="pageSize"
-        :page-sizes="[20, 30, 50, 100]" :total="totalZones" layout="total, sizes, prev, pager, next, jumper"
-        style="margin-top: 12px; justify-content: flex-end" @size-change="handleSizeChange"
-        @current-change="handlePageChange" />
     </el-card>
 
     <!-- Batch add dialog -->
@@ -901,8 +1064,11 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
     <el-card v-if="activeZone" class="zone-card" shadow="never">
       <template #header>
         <div class="zone-detail-header">
-          <span>{{ activeZone.name || t('building.zone.title') + ' ' + (selectedZoneIdx + 1) }} — {{
-            t('building.zone.detailEdit') }}</span>
+          <div class="zone-detail-title">
+            <span v-if="isBatchDetailEditing">{{ t('building.zone.detailEditBatch', { count: selectedRows.length }) }}</span>
+            <span v-else>#{{ selectedZoneIdx + 1 }}<template v-if="activeZone.name"> · {{ activeZone.name }}</template> — {{
+              t('building.zone.detailEdit') }}</span>
+          </div>
           <el-dropdown trigger="click" @command="applyPreset">
             <el-button size="small">
               {{ activePresetKey ? t(`building.zone.presets.${activePresetKey}`) : t('building.applyTemplate') }}
@@ -920,15 +1086,47 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
           </el-dropdown>
         </div>
       </template>
-      <el-form label-position="top" class="zone-form">
-
-        <!-- Envelope -->
-        <el-divider content-position="left">{{ t('building.envelope.title') }}</el-divider>
+      <el-form label-position="top" class="zone-form" @input.capture="handleZoneFormInput" @change.capture="handleZoneFormChange">
+        <div class="zone-basic-row">
+          <div class="zone-basic-field">
+            <el-form-item :label="t('building.zone.nickname')" class="zone-nickname-item zone-inline-item">
+              <el-input :model-value="getZoneFieldValue('name') as string | undefined" clearable :maxlength="32"
+                :placeholder="isBatchDetailEditing ? t('building.zone.mixedValue') : t('building.zone.nicknamePlaceholder')"
+                @update:model-value="(value: string) => setZoneFieldValue('name', value)" />
+            </el-form-item>
+          </div>
+          <div class="zone-basic-field">
+            <el-form-item :label="t('building.zone.area')" class="zone-inline-item">
+              <el-input-number :model-value="getZoneFieldValue('area') as number | undefined" :min="0.1" :max="9999.9" :precision="1" :controls="false"
+                :placeholder="isBatchDetailEditing ? t('building.zone.mixedValue') : ''" class="zone-basic-number"
+                @update:model-value="(value: number | undefined) => setZoneFieldValue('area', value)" />
+            </el-form-item>
+          </div>
+          <div class="zone-basic-field">
+            <el-form-item :label="t('building.zone.floorHeight')" class="zone-inline-item">
+              <el-input-number :model-value="getZoneFieldValue('floor_height') as number | undefined" :min="1" :max="100" :precision="1" :controls="false"
+                :placeholder="isBatchDetailEditing ? t('building.zone.mixedValue') : ''" class="zone-basic-number"
+                @update:model-value="(value: number | undefined) => setZoneFieldValue('floor_height', value)" />
+            </el-form-item>
+          </div>
+          <div class="zone-basic-field">
+            <el-form-item :label="t('building.envelope.zonePosition')" class="zone-inline-item">
+              <el-select :model-value="getZoneFieldValue('zone_position') as ZonePosition | undefined" class="zone-basic-select"
+                :placeholder="isBatchDetailEditing ? t('building.zone.mixedValue') : ''"
+                @update:model-value="(value: ZonePosition) => setZoneFieldValue('zone_position', value)">
+                <el-option value="single" :label="t('building.envelope.position.single')" />
+                <el-option value="top" :label="t('building.envelope.position.top')" />
+                <el-option value="middle" :label="t('building.envelope.position.middle')" />
+                <el-option value="bottom" :label="t('building.envelope.position.bottom')" />
+              </el-select>
+            </el-form-item>
+          </div>
+        </div>
 
         <!-- Wall exterior config -->
         <el-row :gutter="16">
           <el-col :xs="24" :sm="24">
-            <el-form-item :label="t('building.envelope.wallType')">
+            <el-form-item :label="t('building.envelope.wallType')" class="wall-config-item">
               <div class="wall-config-group">
                 <el-checkbox v-model="activeZone.wall_config.south_exterior">{{ t('building.envelope.wallDir.south')
                   }}</el-checkbox>
@@ -943,29 +1141,33 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
           </el-col>
         </el-row>
 
-        <!-- Internal Gains (bar-chart schedule editor) -->
-        <el-divider content-position="left">{{ t('building.internalGains.title') }}</el-divider>
-
         <div v-for="pm in PARAM_METAS" :key="pm.key" class="ig-param">
           <div class="ig-param-header">
             <span class="ig-param-label">{{ pm.key === 'people_density' ? t('building.internalGains.peopleShort') :
               t(pm.label) }}</span>
-            <div class="ig-peak">
-              <span class="ig-peak-label">{{ t('building.schedule.editor.peakValue') }} ({{ paramUnit(pm.key) }})</span>
-              <el-input-number v-model="getParam(activeZone, pm.key).fixed_value" :min="pm.min" :max="pm.max"
-                :precision="pm.precision" :step="pm.step" :controls="false" size="small" class="ig-number" />
+            <div class="ig-inline-controls">
+              <div class="ig-unit-input">
+              <el-input-number :model-value="getDetailParamFixedValue(pm.key)" :min="pm.min" :max="pm.max"
+                :precision="pm.precision" :step="pm.step" :controls="false" size="small" class="ig-number"
+                :placeholder="isBatchDetailEditing ? t('building.zone.mixedValue') : ''"
+                @update:model-value="(value: number | undefined) => setDetailParamFixedValue(pm.key, value)" />
+                <span class="ig-unit-text">{{ pm.key === 'people_density' ? '人/㎡' : paramUnit(pm.key) }}</span>
+              </div>
+              <template v-if="pm.key === 'people_density'">
+                <span class="ig-multiply">×</span>
+                <div class="ig-unit-input">
+                  <el-input-number :model-value="getPeopleHeatGainValue()" :min="0" :max="500" :precision="0" :step="1"
+                    :controls="false" size="small" class="ig-number ig-number--heat"
+                    :placeholder="isBatchDetailEditing ? t('building.zone.mixedValue') : ''"
+                    @update:model-value="(value: number | undefined) => setPeopleHeatGainValue(value)" />
+                  <span class="ig-unit-text">W/人</span>
+                </div>
+              </template>
             </div>
-            <!-- 人员散热量（仅在 people_density 时显示） -->
-            <div v-if="pm.key === 'people_density'" class="ig-peak">
-              <span class="ig-peak-label">散热量 (W/人)</span>
-              <el-input-number v-model="activeZone.people_heat_gain" :min="0" :max="500" :precision="0" :step="1"
-                :controls="false" size="small" class="ig-number ig-number--heat" />
-            </div>
-            <el-button type="primary" plain size="small" :icon="Plus"
+            <el-button type="primary" plain size="small" :icon="Plus" class="ig-schedule-button"
               :disabled="getParam(activeZone, pm.key).schedules.length >= MAX_SCHEDULES"
               @click="addScheduleForParam(getParam(activeZone, pm.key))">
-              {{ t('building.schedule.editor.addSchedule') }}
-              ({{ getParam(activeZone, pm.key).schedules.length }}/{{ MAX_SCHEDULES }})
+              {{ t('building.schedule.editor.schedule') }}
             </el-button>
           </div>
           <div class="ig-schedules">
@@ -973,103 +1175,45 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
               :peak-value="getParam(activeZone, pm.key).fixed_value" :unit="paramUnit(pm.key)" :type="paramType(pm.key)"
               :param-label="t(pm.label)" :removable="getParam(activeZone, pm.key).schedules.length > 1"
               :conflict-message="getInternalScheduleConflictMsg(getParam(activeZone, pm.key).schedules, sIdx)"
-              @update:model-value="(v: DaySchedule) => getParam(activeZone, pm.key).schedules[sIdx] = v"
+              @update:model-value="(v: DaySchedule) => updateScheduleAt(getParam(activeZone, pm.key), sIdx, v)"
               @remove="removeScheduleAt(getParam(activeZone, pm.key), sIdx)" />
           </div>
         </div>
 
-        <!-- Setpoints -->
-        <el-divider content-position="left">{{ t('building.setpoint.title') }}</el-divider>
-
-        <div v-for="pm in SETPOINT_METAS" :key="pm.key" class="param-row">
-          <div class="param-header">
-            <span class="param-label">{{ t(pm.label) }}</span>
-            <el-radio-group :model-value="getParam(activeZone, pm.key).mode"
-              @update:model-value="(v: string | number | boolean | undefined) => switchMode(getParam(activeZone, pm.key), v)"
-              size="small">
-              <el-radio-button value="fixed">{{ t('building.schedule.fixed') }}</el-radio-button>
-              <el-radio-button value="scheduled">{{ t('building.schedule.scheduled') }}</el-radio-button>
-            </el-radio-group>
+        <div class="param-row setpoint-param-row">
+          <div class="param-header setpoint-param-header">
+            <span class="param-label">{{ t('building.setpoint.combined') }}</span>
+            <el-button type="primary" plain size="small" @click="addCombinedSetpointSchedule(activeZone)"
+              :disabled="getCombinedSetpointParams(activeZone).temperature.schedules.length >= MAX_SCHEDULES">
+              + {{ t('building.schedule.addDayGroup') }}
+              ({{ getCombinedSetpointParams(activeZone).temperature.schedules.length }}/{{ MAX_SCHEDULES }})
+            </el-button>
           </div>
 
-          <!-- Fixed mode -->
-          <div v-if="getParam(activeZone, pm.key).mode === 'fixed'" class="param-fixed">
-            <el-input-number v-model="getParam(activeZone, pm.key).fixed_value" :min="pm.min" :max="pm.max"
-              :precision="pm.precision" :step="pm.step" />
-          </div>
-
-          <!-- Scheduled mode -->
-          <div v-else class="param-schedules">
-            <div v-for="(sch, sIdx) in getParam(activeZone, pm.key).schedules" :key="sIdx" class="schedule-group"
-              :class="{ 'schedule-conflict': isScheduleInConflict(getParam(activeZone, pm.key).schedules, sIdx) }">
-              <el-tag v-if="isScheduleInConflict(getParam(activeZone, pm.key).schedules, sIdx)" type="danger"
-                size="small" effect="dark" class="conflict-badge">
-                {{ t('building.schedule.conflictWarning') }}
-              </el-tag>
-              <div class="schedule-group-top">
-                <el-input v-model="sch.name" size="small" :placeholder="t('building.schedule.dayGroupName')"
-                  style="width: 140px" />
-                <div class="schedule-value-row">
-                  <span class="schedule-sub-label">{{ t('building.schedule.value') }}:</span>
-                  <el-input-number v-model="sch.value" :min="pm.min" :max="pm.max" :precision="pm.precision"
-                    :step="pm.step" size="small" style="width: 140px" />
-                </div>
-                <el-button type="danger" link size="small" @click="removeDayGroup(getParam(activeZone, pm.key), sIdx)">
-                  {{ t('building.schedule.removeSlot') }}
-                </el-button>
-              </div>
-              <div class="schedule-line">
-                <span class="schedule-sub-label">{{ t('building.schedule.dateRange') }}:</span>
-                <el-select v-model="sch.start_month" size="small" style="width: 80px">
-                  <el-option v-for="m in 12" :key="m" :label="t(`building.schedule.monthNames.${m}`)" :value="m" />
-                </el-select>
-                <el-select v-model="sch.start_day" size="small" style="width: 70px">
-                  <el-option v-for="d in (MONTH_DAYS[sch.start_month] || 31)" :key="d"
-                    :label="`${d}${t('building.schedule.dayUnit')}`" :value="d" />
-                </el-select>
-                <span class="schedule-sep">~</span>
-                <el-select v-model="sch.end_month" size="small" style="width: 80px">
-                  <el-option v-for="m in 12" :key="m" :label="t(`building.schedule.monthNames.${m}`)" :value="m" />
-                </el-select>
-                <el-select v-model="sch.end_day" size="small" style="width: 70px">
-                  <el-option v-for="d in (MONTH_DAYS[sch.end_month] || 31)" :key="d"
-                    :label="`${d}${t('building.schedule.dayUnit')}`" :value="d" />
-                </el-select>
-              </div>
-              <div class="schedule-line">
-                <span class="schedule-sub-label">{{ t('building.schedule.weekdays') }}:</span>
-                <el-checkbox-group v-model="sch.days" size="small" class="day-checkboxes">
-                  <el-checkbox-button v-for="d in [1, 2, 3, 4, 5, 6, 7]" :key="d" :value="d">
-                    {{ t(`building.schedule.dayNames.${d}`) }}
-                  </el-checkbox-button>
-                </el-checkbox-group>
-              </div>
-              <div class="schedule-line schedule-hours-line">
-                <div class="hours-header">
-                  <span class="schedule-sub-label">{{ t('building.schedule.hours') }}:</span>
-                  <div class="hours-quick">
-                    <el-button link type="primary" size="small" @click="selectAllHours(sch)">{{
-                      t('building.schedule.selectAll') }}</el-button>
-                    <el-button link type="primary" size="small" @click="clearAllHours(sch)">{{
-                      t('building.schedule.clearAll') }}</el-button>
-                    <el-button link type="primary" size="small" @click="toggleHourRange(sch, 8, 18)">8~18</el-button>
-                    <el-button link type="primary" size="small" @click="toggleHourRange(sch, 0, 8)">0~8</el-button>
-                    <el-button link type="primary" size="small" @click="toggleHourRange(sch, 18, 24)">18~24</el-button>
+          <div class="param-schedules setpoint-schedules">
+            <ScheduleEditor v-for="(sch, sIdx) in getCombinedSetpointParams(activeZone).temperature.schedules" :key="sIdx"
+              :model-value="sch" :index="sIdx" mode="binary" type="setpoint" :param-label="t('building.setpoint.combined')"
+              :conflict-message="isScheduleInConflict(getCombinedSetpointParams(activeZone).temperature.schedules, sIdx) ? t('building.schedule.conflictWarning') : ''"
+              :removable="getCombinedSetpointParams(activeZone).temperature.schedules.length > 1"
+              @update:model-value="(value: DaySchedule) => updateCombinedSetpointSchedule(activeZone, sIdx, value)"
+              @remove="removeCombinedSetpointSchedule(activeZone, sIdx)">
+              <template #before-meta>
+                <div class="setpoint-value-settings">
+                  <div class="setpoint-value-row">
+                    <span class="schedule-sub-label">{{ t('building.setpoint.temperature') }} ({{ paramUnit('temperature') }})</span>
+                    <el-input-number :model-value="sch.value" :min="10" :max="35" :precision="1"
+                      :step="0.5" :controls="false" size="small" class="setpoint-value-input"
+                      @update:model-value="(value: number | undefined) => updateCombinedSetpointValue(activeZone, sIdx, 'temperature', value)" />
+                  </div>
+                  <div class="setpoint-value-row">
+                    <span class="schedule-sub-label">{{ t('building.setpoint.humidity') }} ({{ paramUnit('relative_humidity') }})</span>
+                    <el-input-number :model-value="getCombinedSetpointParams(activeZone).relative_humidity.schedules[sIdx].value" :min="20" :max="90" :precision="0"
+                      :step="5" :controls="false" size="small" class="setpoint-value-input"
+                      @update:model-value="(value: number | undefined) => updateCombinedSetpointValue(activeZone, sIdx, 'relative_humidity', value)" />
                   </div>
                 </div>
-                <div class="hour-grid">
-                  <label v-for="h in ALL_HOURS" :key="h" class="hour-cell" :class="{ active: sch.hours.includes(h) }"
-                    @click="sch.hours.includes(h) ? (sch.hours = sch.hours.filter(x => x !== h)) : sch.hours.push(h)">
-                    {{ h }}
-                  </label>
-                </div>
-              </div>
-            </div>
-            <el-button type="primary" plain size="small" @click="addDayGroup(getParam(activeZone, pm.key))"
-              :disabled="getParam(activeZone, pm.key).schedules.length >= MAX_SCHEDULES">
-              + {{ t('building.schedule.addDayGroup') }}
-              ({{ getParam(activeZone, pm.key).schedules.length }}/{{ MAX_SCHEDULES }})
-            </el-button>
+              </template>
+            </ScheduleEditor>
             <div class="schedule-note">{{ t('building.schedule.unspecifiedNote') }}</div>
           </div>
         </div>
@@ -1085,6 +1229,10 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   display: flex;
   flex-direction: column;
   gap: 16px;
+  --bv-button-press-scale: 0.96;
+  --bv-icon-button-press-scale: 0.9;
+  --bv-button-shadow: none;
+  --bv-tap-highlight: transparent;
 }
 
 /* ---- Header ---- */
@@ -1145,6 +1293,10 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   background: #f8fafc;
 }
 
+.zone-table-card :deep(.el-card__body) {
+  padding: 12px;
+}
+
 .zone-table-card :deep(.el-table) {
   width: 100%;
 }
@@ -1182,29 +1334,52 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
 .zone-grid-toolbar {
   display: flex;
   align-items: center;
+  gap: 12px;
   padding: 4px 2px;
   border-bottom: 1px dashed #e2e8f0;
   margin-bottom: 4px;
 }
 
+.zone-grid-toolbar :deep(.el-switch__label),
+.zone-grid-toolbar :deep(.el-checkbox__label),
 .zg-sel-count {
-  margin-left: 6px;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.zone-grid-toolbar :deep(.el-switch__label) {
+  color: #475569;
+}
+
+.zone-grid-toolbar :deep(.el-switch__label.is-active) {
   color: #0891b2;
-  font-weight: 600;
+}
+
+.zone-grid-toolbar :deep(.el-checkbox) {
+  margin-left: auto;
+}
+
+.zg-sel-count {
+  color: #0891b2;
 }
 
 .zone-grid-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
   gap: 12px;
+}
+
+.zone-grid-scroll {
+  max-height: min(46vh, 460px);
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .zone-mini-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+  padding: 10px 12px;
+  height: 54px;
   border-radius: 10px;
   background: #fff;
   border: 1px solid #e2e8f0;
@@ -1234,6 +1409,7 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   align-items: center;
   gap: 6px;
   min-width: 0;
+  min-height: 28px;
 }
 
 .zmc-num {
@@ -1243,10 +1419,26 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   flex: 0 0 24px;
 }
 
-.zmc-name {
-  flex: 0 1 160px;
-  min-width: 96px;
-  max-width: 180px;
+.zmc-nickname {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.zmc-area {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .zmc-actions {
@@ -1257,80 +1449,155 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   flex: 0 0 auto;
 }
 
-.zmc-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 10px;
-}
-
-.zmc-field {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.zmc-field--full {
-  grid-column: 1 / -1;
-  justify-content: flex-start;
-}
-
-.zmc-field label {
-  font-size: 11px;
-  color: #64748b;
-  font-weight: 500;
-  line-height: 1.25;
-  white-space: nowrap;
-  flex: 0 0 auto;
-}
-
-.zmc-number {
-  width: 96px;
-  flex: 0 0 96px;
-}
-
-.zmc-select {
-  width: min(100%, 230px);
-  flex: 1 1 180px;
-  max-width: 230px;
-}
-
 @media (max-width: 640px) {
+  .zone-table-card {
+    margin-bottom: 10px;
+  }
+
+  .zone-table-card :deep(.el-card__body) {
+    padding: 8px;
+  }
+
+  .building-view,
+  .building-view :deep(button),
+  .building-view :deep(.el-button),
+  .building-view :deep(.el-checkbox__input),
+  .zone-mini-card,
+  .hour-cell,
+  .setpoint-weekday-pill {
+    -webkit-tap-highlight-color: var(--bv-tap-highlight);
+    touch-action: manipulation;
+  }
+
+  .zone-grid {
+    gap: 8px;
+  }
+
+  .zone-grid-toolbar {
+    gap: 8px;
+    padding: 2px 0 6px;
+    margin-bottom: 0;
+  }
+
   .zone-grid-list {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .zone-grid-scroll {
+    max-height: 38vh;
+    padding-right: 2px;
   }
 
   .zone-mini-card {
-    padding: 10px;
+    height: 44px;
+    padding: 6px 7px;
+    border-radius: 8px;
   }
 
-  .zmc-body {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px 6px;
-  }
-
-  .zmc-field {
+  .zmc-header {
+    min-height: 30px;
     gap: 4px;
   }
 
-  .zmc-field label {
+  .zmc-num {
+    flex-basis: auto;
+    font-size: 11px;
+  }
+
+  .zmc-area {
+    padding: 1px 5px;
     font-size: 10px;
   }
 
-  .zmc-number {
-    width: 72px;
-    flex-basis: 72px;
+  .zmc-nickname {
+    font-size: 11px;
   }
 
-  .zmc-field--full {
-    grid-column: 1 / -1;
-    justify-content: space-between;
+  .zone-grid:not(.is-zone-select-mode) .zmc-nickname {
+    display: none;
   }
 
-  .zmc-select {
-    flex-basis: 190px;
-    max-width: 210px;
+  .zmc-actions {
+    gap: 0;
+  }
+
+  .zmc-actions :deep(.el-button) {
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    min-height: 24px;
+    padding: 0;
+  }
+
+  .zone-mini-card,
+  .building-mb-icon-btn,
+  .building-mb-save,
+  .hour-cell,
+  .setpoint-weekday-pill {
+    transition: transform 0.12s ease, background-color 0.12s ease, border-color 0.12s ease;
+  }
+
+  .zone-mini-card,
+  .zone-mini-card:hover,
+  .zone-mini-card.active,
+  .zone-mini-card.active:hover {
+    box-shadow: none;
+    transform: none;
+  }
+
+  .zone-mini-card:hover {
+    border-color: #e2e8f0;
+  }
+
+  .zone-mini-card.active,
+  .zone-mini-card.active:hover {
+    border-color: #0891b2;
+  }
+
+  .zone-mini-card:active {
+    transform: scale(0.99);
+    background: #f8fafc;
+    border-color: rgba(8, 145, 178, 0.55);
+  }
+
+  .zone-mini-card.active:active {
+    background: #e0f7fb;
+  }
+
+  .building-mb-icon-btn:active,
+  .building-mb-save:active,
+  .hour-cell:active,
+  .setpoint-weekday-pill:active,
+  .building-view :deep(.el-button:active) {
+    transform: scale(var(--bv-button-press-scale));
+  }
+
+  .building-view :deep(.bv-action-btn),
+  .building-view :deep(.bv-action-btn:hover),
+  .building-view :deep(.bv-action-btn:focus),
+  .building-view :deep(.bv-action-btn:focus-visible),
+  .building-view :deep(.bv-action-btn:active) {
+    --el-button-hover-bg-color: transparent;
+    --el-button-active-bg-color: transparent;
+    --el-button-hover-border-color: transparent;
+    --el-button-active-border-color: transparent;
+    --el-button-outline-color: transparent;
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: var(--bv-button-shadow) !important;
+    -webkit-box-shadow: var(--bv-button-shadow) !important;
+    outline: none !important;
+  }
+
+  .building-view :deep(.bv-action-btn:active) {
+    transform: scale(var(--bv-icon-button-press-scale));
+  }
+
+  .building-view :deep(button:focus:not(:focus-visible)),
+  .building-view :deep(.el-button:focus:not(:focus-visible)) {
+    outline: none;
+    box-shadow: none;
   }
 }
 
@@ -1345,6 +1612,64 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   flex-wrap: wrap;
   gap: 8px;
   font-weight: 600;
+}
+
+.zone-detail-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.zone-nickname-item {
+  margin-bottom: 0;
+}
+
+.zone-nickname-item :deep(.el-input) {
+  max-width: none;
+}
+
+.zone-inline-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.zone-inline-item :deep(.el-form-item__label) {
+  flex: 0 0 auto;
+  width: auto !important;
+  min-width: 28px;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 32px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.zone-inline-item :deep(.el-form-item__content) {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0 !important;
+}
+
+.zone-basic-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 8px;
+}
+
+.zone-basic-field {
+  flex: 1 1 210px;
+  min-width: 180px;
+}
+
+.zone-basic-number,
+.zone-basic-select {
+  width: 100%;
 }
 
 /* ---- Zone card ---- */
@@ -1370,6 +1695,25 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   .zone-card :deep(.el-card__body) {
     padding: 10px;
   }
+
+  .zone-basic-row {
+    gap: 6px 10px;
+  }
+
+  .zone-basic-field {
+    flex: 1 1 calc(50% - 5px);
+    min-width: 0;
+  }
+
+  .zone-inline-item {
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+
+  .zone-inline-item :deep(.el-form-item__label) {
+    min-width: 24px;
+    font-size: 12px;
+  }
 }
 
 :deep(.zone-card .el-divider__text) {
@@ -1378,17 +1722,17 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
 
 /* ---- Internal gains (new bar-chart layout) ---- */
 .ig-param {
-  margin-bottom: 18px;
-  padding: 14px;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+  margin-bottom: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .ig-param-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 12px;
   flex-wrap: wrap;
 }
@@ -1397,7 +1741,35 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   font-weight: 700;
   font-size: 14px;
   color: #0f172a;
-  flex: 0 0 auto;
+  flex: 0 0 34px;
+}
+
+.ig-inline-controls {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ig-unit-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ig-unit-text,
+.ig-multiply {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ig-schedule-button {
+  margin-left: auto;
 }
 
 .ig-peak {
@@ -1437,15 +1809,15 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   .ig-param-header {
     flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .ig-param-label {
-    flex: 0 0 100%;
+    flex: 0 0 34px;
   }
 
   .ig-param {
-    padding: 4px;
+    padding: 0;
   }
 
   .ig-peak {
@@ -1461,23 +1833,37 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   }
 
   .ig-number {
-    width: 72px;
-    flex-basis: 72px;
+    width: 66px;
+    flex-basis: 66px;
   }
 
   .ig-number--heat {
-    width: 64px;
-    flex-basis: 64px;
+    width: 62px;
+    flex-basis: 62px;
+  }
+
+  .ig-inline-controls {
+    flex: 1 1 150px;
+    gap: 4px;
+  }
+
+  .ig-unit-text,
+  .ig-multiply {
+    font-size: 11px;
+  }
+
+  .ig-schedule-button {
+    padding: 5px 8px;
   }
 }
 
 /* ---- Legacy setpoint param-row ---- */
 .param-row {
   margin-bottom: 16px;
-  padding: 14px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  background: var(--el-fill-color-blank);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .param-header {
@@ -1495,13 +1881,9 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   color: var(--el-text-color-primary);
 }
 
-.param-fixed {
-  padding-left: 4px;
-}
-
 /* ---- Schedule ---- */
 .param-schedules {
-  padding-left: 4px;
+  padding-left: 0;
 }
 
 .schedule-group {
@@ -1516,6 +1898,271 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
 .schedule-group.schedule-conflict {
   border-color: var(--el-color-danger);
   background: var(--el-color-danger-light-9);
+}
+
+.setpoint-schedules {
+  padding-left: 0;
+}
+
+.setpoint-param-header {
+  margin-bottom: 8px;
+}
+
+.setpoint-schedule-card {
+  background: #ffffff;
+  border-color: #e4e4e7;
+  border-radius: 16px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.setpoint-schedule-card:hover {
+  border-color: rgba(8, 145, 178, 0.35);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.setpoint-schedule-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.setpoint-schedule-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.setpoint-type-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: rgba(14, 165, 233, 0.12);
+  color: #0284c7;
+}
+
+.setpoint-schedule-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.setpoint-name-input {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  outline: none;
+  color: #18181b;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 2px 0;
+}
+
+.setpoint-name-input:focus {
+  border-bottom-color: #0891b2;
+}
+
+.setpoint-name-input::placeholder {
+  color: #a1a1aa;
+}
+
+.setpoint-type-tag {
+  font-size: 11px;
+  color: #a1a1aa;
+  font-weight: 500;
+}
+
+.setpoint-schedule-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.setpoint-del-btn {
+  background: transparent;
+  border: 1px solid #e4e4e7;
+  color: #a1a1aa;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.setpoint-del-btn:hover {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+}
+
+.setpoint-value-settings {
+  display: flex;
+  align-items: center;
+  gap: 16px 32px;
+  flex-wrap: wrap;
+}
+
+.setpoint-value-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.setpoint-value-input {
+  width: 92px;
+  flex: 0 0 92px;
+}
+
+.setpoint-value-input :deep(.el-input__wrapper) {
+  min-height: 30px;
+  background: #fafafa;
+  border: 1px solid #e4e4e7;
+  box-shadow: none;
+}
+
+.setpoint-meta-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 32px;
+  align-items: center;
+}
+
+.setpoint-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.setpoint-meta-label {
+  flex: 0 0 auto;
+  width: auto;
+  color: #71717a;
+  font-weight: 500;
+}
+
+.setpoint-date-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.setpoint-month-select {
+  width: 82px;
+}
+
+.setpoint-day-select {
+  width: 70px;
+}
+
+.setpoint-weekday-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.setpoint-weekday-pill {
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  background: #fafafa;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  color: #71717a;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.setpoint-weekday-pill.is-active {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.28);
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.setpoint-time-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.setpoint-hours-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.setpoint-hours-quick {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.setpoint-hour-grid {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  gap: 3px;
+  height: 24px;
+}
+
+.setpoint-hour-cell {
+  width: auto;
+  height: 24px;
+  border: 0;
+  border-radius: 3px;
+  background: #f4f4f5;
+  color: transparent;
+  font-size: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.setpoint-hour-cell:hover {
+  background: rgba(148, 163, 184, 0.25);
+}
+
+.setpoint-hour-cell.active {
+  background: #0891b2;
+  border-color: #0891b2;
+}
+
+.setpoint-hour-ticks {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  gap: 4px;
+  color: #a1a1aa;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.setpoint-hour-ticks span {
+  white-space: nowrap;
 }
 
 .conflict-badge {
@@ -1617,6 +2264,25 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   border-color: var(--el-color-primary);
 }
 
+.hour-grid.setpoint-hour-grid {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  gap: 3px;
+  height: 24px;
+}
+
+.hour-cell.setpoint-hour-cell {
+  width: auto;
+  height: 24px;
+  border: 0;
+  border-radius: 3px;
+  background: #f4f4f5;
+  color: transparent;
+  font-size: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .schedule-note {
   font-size: 12px;
   color: var(--el-text-color-placeholder);
@@ -1630,14 +2296,65 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
 
 .wall-config-group {
   display: flex;
-  gap: 16px;
+  gap: 0 14px;
   flex-wrap: wrap;
+}
+
+.wall-config-group :deep(.el-checkbox) {
+  height: 28px;
+  margin-right: 0;
+}
+
+.wall-config-group :deep(.el-checkbox__label) {
+  padding-left: 5px;
+}
+
+.wall-config-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.wall-config-item :deep(.el-form-item__label) {
+  flex: 0 0 auto;
+  width: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 32px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.wall-config-item :deep(.el-form-item__content) {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0 !important;
 }
 
 /* ---- Responsive ---- */
 @media (max-width: 768px) {
   .building-view {
     padding: 0 8px;
+  }
+
+  .wall-config-item {
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .wall-config-group {
+    gap: 0 8px;
+  }
+
+  .wall-config-group :deep(.el-checkbox) {
+    height: 24px;
+  }
+
+  .wall-config-group :deep(.el-checkbox__label) {
+    padding-left: 3px;
+    font-size: 12px;
   }
 
   .page-header {
@@ -1681,6 +2398,112 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
 
   .schedule-sep {
     margin: 0;
+  }
+
+  .setpoint-schedule-card {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .setpoint-schedule-head {
+    align-items: flex-start;
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+
+  .setpoint-schedule-left {
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .setpoint-type-badge {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+  }
+
+  .setpoint-schedule-title {
+    flex: 0 0 70px;
+    width: 70px;
+  }
+
+  .setpoint-type-tag {
+    display: none;
+  }
+
+  .setpoint-schedule-actions {
+    flex: 1;
+    justify-content: flex-end;
+  }
+
+  .setpoint-value-settings {
+    gap: 8px;
+  }
+
+  .setpoint-value-row {
+    gap: 4px;
+  }
+
+  .setpoint-time-row {
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .setpoint-hours-header {
+    align-items: flex-start;
+  }
+
+  .setpoint-hour-ticks {
+    gap: 3px;
+    font-size: 9px;
+  }
+
+  .hour-grid.setpoint-hour-grid {
+    grid-template-columns: repeat(24, minmax(0, 1fr));
+    gap: 3px;
+    height: 24px;
+  }
+
+  .hour-cell.setpoint-hour-cell {
+    width: auto;
+    height: 24px;
+    font-size: 0;
+  }
+
+  .setpoint-meta-row {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .setpoint-meta-label {
+    width: 34px !important;
+    flex: 0 0 34px;
+    margin-bottom: 0 !important;
+  }
+
+  .setpoint-date-controls {
+    flex: 1;
+    flex-wrap: nowrap;
+  }
+
+  .setpoint-month-select {
+    width: 68px !important;
+  }
+
+  .setpoint-day-select {
+    width: 60px !important;
+  }
+
+  .setpoint-weekday-pills {
+    flex: 1;
+    gap: 4px;
+  }
+
+  .setpoint-weekday-pill {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    font-size: 12px;
   }
 
   .hour-cell {
@@ -1738,6 +2561,7 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
 }
 
 .building-mobile-topbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1748,8 +2572,17 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   flex-shrink: 0;
 }
 
-.building-mb-back {
+.building-mb-left {
   flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.building-mb-back {
   width: 36px;
   height: 36px;
   display: inline-flex;
@@ -1766,13 +2599,71 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   background: rgba(15, 23, 42, 0.06);
 }
 
-.building-mb-spacer {
-  flex: 1 1 auto;
-  min-width: 0;
+.building-mb-area {
+  max-width: 66px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.18);
+  color: #047857;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.building-mb-area {
+.building-mb-title {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - 230px);
+  min-width: 0;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.building-mb-actions {
   flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.building-mb-icon-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.86);
+  color: #2563eb;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.building-mb-icon-btn--danger {
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.18);
+}
+
+.building-mb-icon-btn:disabled {
+  opacity: 0.42;
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.22);
+  box-shadow: none;
 }
 
 .building-mb-save-badge {
@@ -1785,16 +2676,17 @@ const MONTH_DAYS: Record<number, number> = { 1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--brand-primary, #6366f1);
+  background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%);
   color: #fff;
-  border: none;
-  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 10px;
   -webkit-tap-highlight-color: transparent;
-  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.3);
+  box-shadow: 0 6px 14px rgba(37, 99, 235, 0.24);
 }
 
 .building-mb-save:disabled {
   opacity: 0.6;
+  box-shadow: none;
 }
 
 .building-mb-save .is-loading {

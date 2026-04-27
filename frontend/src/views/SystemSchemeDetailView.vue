@@ -1348,14 +1348,17 @@ const capacityShortMessage = computed(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--brand-primary, #6366f1);
+  background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%);
   color: #fff;
-  border: none;
-  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 10px;
   -webkit-tap-highlight-color: transparent;
-  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.3);
+  box-shadow: 0 6px 14px rgba(37, 99, 235, 0.24);
 }
-.ssd-mb-save:disabled { opacity: 0.6; }
+.ssd-mb-save:disabled {
+  opacity: 0.6;
+  box-shadow: none;
+}
 .ssd-mb-save .is-loading {
   animation: ssd-spin 1s linear infinite;
 }
