@@ -195,7 +195,6 @@ function derivedComboLabel(subId: string | undefined, comboId: string | undefine
   const derived = derivedSubMap.value.get(subId)
   const combo = derived?.combos.find((c) => c.id === comboId)
   if (!combo || !combo.primary) return ''
-  const name = combo.primary.name || combo.primary.model_no || ''
   const count = combo.primary_count || 1
   const unitCap = (combo.cooling_capacity || 0) / Math.max(count, 1)
   return `${unitCap.toFixed(1)} × ${count}`
@@ -339,6 +338,7 @@ function addGroup() {
     refreshGroupSettings(next)
   })
 }
+void addGroup
 
 function removeGroup(groupId: string) {
   updateStrategy((next) => {
@@ -372,6 +372,7 @@ function updateGroupName(groupId: string, name: string) {
     if (group) group.name = name
   })
 }
+void updateGroupName
 
 function updateZoneGroup(zoneKeyValue: string, groupId: string) {
   updateStrategy((next) => {
@@ -403,6 +404,7 @@ function updatePriority(groupId: string, subsystemId: string, value: number) {
     next.load_distribution.group_settings[groupId].priorities[subsystemId] = Number(value || 1)
   })
 }
+void updatePriority
 
 function sortedPriorityIds(groupId: string): string[] {
   const ids = props.subsystems
@@ -434,6 +436,7 @@ function updateLoadMode(mode: ControlStrategy['load_distribution']['mode']) {
     refreshGroupSettings(next)
   })
 }
+void updateLoadMode
 
 function groupModeOf(groupId: string): ControlStrategy['load_distribution']['mode'] {
   const setting = props.modelValue.load_distribution.group_settings[groupId]
@@ -586,6 +589,7 @@ function removeZoneFromGroup(zoneKeyValue: string, currentGroupId: string) {
   if (!fallback) return
   updateZoneGroup(zoneKeyValue, fallback)
 }
+void removeZoneFromGroup
 function removeSubsystemFromGroup(subsystemId: string, currentGroupId: string) {
   const groups = props.modelValue.load_distribution.groups
   const fallback = groups.find((g) => g.id !== currentGroupId)?.id || groups[0]?.id
@@ -609,6 +613,14 @@ function getAirCooledStrategy(sub: Subsystem): AirCooledStrategy | null {
   return strategy?.subsystem_type === 'air_cooled' ? strategy : null
 }
 
+function requireChillerPlantStrategy(sub: Subsystem): ChillerPlantStrategy {
+  return getChillerPlantStrategy(sub) || (buildDefaultSubsystemStrategy(sub, derivedSubMap.value.get(sub.id || '')) as ChillerPlantStrategy)
+}
+
+function requireAirCooledStrategy(sub: Subsystem): AirCooledStrategy {
+  return getAirCooledStrategy(sub) || (buildDefaultSubsystemStrategy(sub, derivedSubMap.value.get(sub.id || '')) as AirCooledStrategy)
+}
+
 const fullscreenChillerStrategy = computed(() => getChillerPlantStrategy(fullscreenStageSubSafe.value))
 const fullscreenAirCooledStrategy = computed(() => getAirCooledStrategy(fullscreenStageSubSafe.value))
 const fullscreenChillerStages = computed(() => fullscreenChillerStrategy.value?.equipment.chiller_stages || [])
@@ -616,10 +628,11 @@ const fullscreenModuleStages = computed(() => fullscreenAirCooledStrategy.value?
 
 function updateSubsystemStrategy(sub: Subsystem, mutator: (next: SubsystemControlStrategy) => void) {
   if (!sub.id) return
+  const subId = sub.id
   updateStrategy((next) => {
-    const current = cloneJson(next.system_strategies[sub.id]) as SubsystemControlStrategy
+    const current = cloneJson(next.system_strategies[subId]) as SubsystemControlStrategy
     mutator(current)
-    next.system_strategies[sub.id] = current
+    next.system_strategies[subId] = current
   })
 }
 
@@ -635,9 +648,11 @@ function resetSubsystemStrategy(sub: Subsystem) {
 }
 
 function addSchedule(sub: Subsystem) {
+  if (!sub.id) return
+  const subId = sub.id
   updateSubsystemStrategy(sub, (next) => {
     if (next.run_schedules.length >= 20) return
-    next.run_schedules.push({ ...cloneJson(next.run_schedules[0] || buildDefaultSubsystemStrategy(sub, derivedSubMap.value.get(sub.id)).run_schedules[0]), name: `日程组 ${next.run_schedules.length + 1}` })
+    next.run_schedules.push({ ...cloneJson(next.run_schedules[0] || buildDefaultSubsystemStrategy(sub, derivedSubMap.value.get(subId)).run_schedules[0]), name: `日程组 ${next.run_schedules.length + 1}` })
   })
 }
 
@@ -1032,7 +1047,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
             <el-radio-group
               :model-value="groupModeOf(group.id)"
               size="small"
-              @update:model-value="(val) => updateGroupMode(group.id, val)"
+              @update:model-value="(val) => updateGroupMode(group.id, val as ControlStrategy['load_distribution']['mode'])"
             >
               <el-radio value="fixed_ratio">{{ t('scheme.strategy.fixedRatio') }}</el-radio>
               <el-radio value="by_priority">{{ t('scheme.strategy.byPriority') }}</el-radio>
@@ -1078,7 +1093,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                 drag-class="ld-priority-tag--drag"
                 animation="180"
                 class="ld-priority-list"
-                @end="(evt) => reorderPriorityByIndex(group.id, evt.oldIndex ?? -1, evt.newIndex ?? -1)"
+                @end="(evt: { oldIndex?: number; newIndex?: number }) => reorderPriorityByIndex(group.id, evt.oldIndex ?? -1, evt.newIndex ?? -1)"
               >
                 <template #item="{ element: sid, index: idx }">
                   <div
@@ -1172,14 +1187,14 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
               />
               <div class="profile-stack" v-if="getSubsystemStrategy(sub)?.subsystem_type === 'chiller_plant'">
                 <StrategyValueProfileEditor
-                  :model-value="getSubsystemStrategy(sub)?.water_temp.chw_supply"
+                  :model-value="requireChillerPlantStrategy(sub).water_temp.chw_supply"
                   :label="t('scheme.strategy.chwSupply')"
                   :min="1"
                   :max="25"
                   @update:model-value="(val) => updateSubsystemStrategy(sub, (next) => { if (next.subsystem_type === 'chiller_plant') next.water_temp.chw_supply = val })"
                 />
                 <StrategyValueProfileEditor
-                  :model-value="getSubsystemStrategy(sub)?.water_temp.chw_delta"
+                  :model-value="requireChillerPlantStrategy(sub).water_temp.chw_delta"
                   :label="t('scheme.strategy.chwDelta')"
                   :min="1"
                   :max="15"
@@ -1187,14 +1202,14 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                   @update:model-value="(val) => updateSubsystemStrategy(sub, (next) => { if (next.subsystem_type === 'chiller_plant') next.water_temp.chw_delta = val })"
                 />
                 <StrategyValueProfileEditor
-                  :model-value="getSubsystemStrategy(sub)?.water_temp.approach"
+                  :model-value="requireChillerPlantStrategy(sub).water_temp.approach"
                   :label="t('scheme.strategy.approach')"
                   :min="1"
                   :max="15"
                   @update:model-value="(val) => updateSubsystemStrategy(sub, (next) => { if (next.subsystem_type === 'chiller_plant') next.water_temp.approach = val })"
                 />
                 <StrategyValueProfileEditor
-                  :model-value="getSubsystemStrategy(sub)?.water_temp.cw_delta"
+                  :model-value="requireChillerPlantStrategy(sub).water_temp.cw_delta"
                   :label="t('scheme.strategy.cwDelta')"
                   :min="1"
                   :max="15"
@@ -1204,14 +1219,14 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
               </div>
               <div class="profile-stack" v-else-if="getSubsystemStrategy(sub)?.subsystem_type === 'air_cooled'">
                 <StrategyValueProfileEditor
-                  :model-value="getSubsystemStrategy(sub)?.water_temp.cooling_supply"
+                  :model-value="requireAirCooledStrategy(sub).water_temp.cooling_supply"
                   :label="t('scheme.strategy.coolingSupply')"
                   :min="1"
                   :max="25"
                   @update:model-value="(val) => updateSubsystemStrategy(sub, (next) => { if (next.subsystem_type === 'air_cooled') next.water_temp.cooling_supply = val })"
                 />
                 <StrategyValueProfileEditor
-                  :model-value="getSubsystemStrategy(sub)?.water_temp.cooling_delta"
+                  :model-value="requireAirCooledStrategy(sub).water_temp.cooling_delta"
                   :label="t('scheme.strategy.coolingDelta')"
                   :min="1"
                   :max="15"
@@ -1219,14 +1234,14 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                   @update:model-value="(val) => updateSubsystemStrategy(sub, (next) => { if (next.subsystem_type === 'air_cooled') next.water_temp.cooling_delta = val })"
                 />
                 <StrategyValueProfileEditor
-                  :model-value="getSubsystemStrategy(sub)?.water_temp.heating_supply"
+                  :model-value="requireAirCooledStrategy(sub).water_temp.heating_supply"
                   :label="t('scheme.strategy.heatingSupply')"
                   :min="30"
                   :max="100"
                   @update:model-value="(val) => updateSubsystemStrategy(sub, (next) => { if (next.subsystem_type === 'air_cooled') next.water_temp.heating_supply = val })"
                 />
                 <StrategyValueProfileEditor
-                  :model-value="getSubsystemStrategy(sub)?.water_temp.heating_delta"
+                  :model-value="requireAirCooledStrategy(sub).water_temp.heating_delta"
                   :label="t('scheme.strategy.heatingDelta')"
                   :min="1"
                   :max="15"
@@ -1285,7 +1300,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="(stage, stageIdx) in getSubsystemStrategy(sub)?.equipment.chiller_stages || []" :key="stage.id">
+                    <tr v-for="(stage, stageIdx) in getChillerPlantStrategy(sub)?.equipment.chiller_stages || []" :key="stage.id">
                       <td class="st-stage-col">{{ stageIdx + 1 }}</td>
                       <td v-for="combo in sub.combos" :key="combo.id || combo.combo_index" :class="{ 'is-zero': !(combo.id && stage.combo_counts[combo.id]) }">
                         <el-input-number
@@ -1310,7 +1325,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                         <el-input-number
                           :model-value="stage.loading_up || undefined"
                           :min="30" :max="100" size="small" controls-position="right"
-                          :disabled="stageIdx === (getSubsystemStrategy(sub)?.equipment.chiller_stages.length || 1) - 1"
+                          :disabled="stageIdx === (getChillerPlantStrategy(sub)?.equipment.chiller_stages.length || 1) - 1"
                           @update:model-value="(val) => updateStageField(sub, stageIdx, 'loading_up', Number(val || 0))"
                         />
                       </td>
@@ -1318,7 +1333,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                       <td class="st-act-col">
                         <el-button text :icon="Plus" @click="insertStageAt(sub, stageIdx)" :title="'在此行下方插入新档位'" />
                         <el-button text type="danger" :icon="Delete"
-                          :disabled="(getSubsystemStrategy(sub)?.equipment.chiller_stages?.length || 0) <= 1"
+                          :disabled="(getChillerPlantStrategy(sub)?.equipment.chiller_stages?.length || 0) <= 1"
                           @click="removeStage(sub, stageIdx)" />
                       </td>
                     </tr>
@@ -1366,7 +1381,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="(stage, stageIdx) in getSubsystemStrategy(sub)?.equipment.module_stages || []" :key="stage.id">
+                    <tr v-for="(stage, stageIdx) in getAirCooledStrategy(sub)?.equipment.module_stages || []" :key="stage.id">
                       <td class="st-stage-col">{{ stageIdx + 1 }}</td>
                       <td v-for="combo in sub.combos" :key="combo.id || combo.combo_index" :class="{ 'is-zero': !(combo.id && stage.combo_counts[combo.id]) }">
                         <el-input-number
@@ -1391,7 +1406,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                         <el-input-number
                           :model-value="stage.loading_up || undefined"
                           :min="0" :max="100" size="small" controls-position="right"
-                          :disabled="stageIdx === (getSubsystemStrategy(sub)?.equipment.module_stages.length || 1) - 1"
+                          :disabled="stageIdx === (getAirCooledStrategy(sub)?.equipment.module_stages.length || 1) - 1"
                           @update:model-value="(val) => updateStageField(sub, stageIdx, 'loading_up', Number(val || 0))"
                         />
                       </td>
@@ -1402,7 +1417,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                       <td class="st-act-col">
                         <el-button text :icon="Plus" @click="insertStageAt(sub, stageIdx)" :title="'在此行下方插入新档位'" />
                         <el-button text type="danger" :icon="Delete"
-                          :disabled="(getSubsystemStrategy(sub)?.equipment.module_stages?.length || 0) <= 1"
+                          :disabled="(getAirCooledStrategy(sub)?.equipment.module_stages?.length || 0) <= 1"
                           @click="removeStage(sub, stageIdx)" />
                       </td>
                     </tr>
@@ -1438,24 +1453,24 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                       <tbody>
                         <tr>
                           <td class="pt-name">{{ t('scheme.strategy.chwPump') }}</td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.chw_pump.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'chw_pump', 'min_freq', Number(val || 0))" /></td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.chw_pump.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'chw_pump', 'max_freq', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getChillerPlantStrategy(sub)?.equipment.chw_pump.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'chw_pump', 'min_freq', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getChillerPlantStrategy(sub)?.equipment.chw_pump.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'chw_pump', 'max_freq', Number(val || 0))" /></td>
                           <td class="pt-extra"></td>
                           <td class="pt-extra"></td>
                         </tr>
                         <tr>
                           <td class="pt-name">{{ t('scheme.strategy.cwPump') }}</td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.cw_pump.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'cw_pump', 'min_freq', Number(val || 0))" /></td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.cw_pump.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'cw_pump', 'max_freq', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getChillerPlantStrategy(sub)?.equipment.cw_pump.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'cw_pump', 'min_freq', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getChillerPlantStrategy(sub)?.equipment.cw_pump.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'cw_pump', 'max_freq', Number(val || 0))" /></td>
                           <td class="pt-extra"></td>
                           <td class="pt-extra"></td>
                         </tr>
                         <tr>
                           <td class="pt-name">{{ t('scheme.strategy.tower') }}</td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.tower.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'tower', 'min_freq', Number(val || 0))" /></td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.tower.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'tower', 'max_freq', Number(val || 0))" /></td>
-                          <td class="pt-extra"><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.tower.m" :min="1" :max="5" @update:model-value="(val) => updateEquipmentField(sub, 'tower', 'm', Number(val || 1))" /></td>
-                          <td class="pt-extra"><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.tower.k" :min="0" :max="20" @update:model-value="(val) => updateEquipmentField(sub, 'tower', 'k', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getChillerPlantStrategy(sub)?.equipment.tower.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'tower', 'min_freq', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getChillerPlantStrategy(sub)?.equipment.tower.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'tower', 'max_freq', Number(val || 0))" /></td>
+                          <td class="pt-extra"><el-input-number size="small" controls-position="right" :model-value="getChillerPlantStrategy(sub)?.equipment.tower.m" :min="1" :max="5" @update:model-value="(val) => updateEquipmentField(sub, 'tower', 'm', Number(val || 1))" /></td>
+                          <td class="pt-extra"><el-input-number size="small" controls-position="right" :model-value="getChillerPlantStrategy(sub)?.equipment.tower.k" :min="0" :max="20" @update:model-value="(val) => updateEquipmentField(sub, 'tower', 'k', Number(val || 0))" /></td>
                         </tr>
                       </tbody>
                     </table>
@@ -1464,7 +1479,7 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                 </template>
 
                 <template v-else-if="getSubsystemStrategy(sub)?.subsystem_type === 'air_cooled'">
-                  <div class="pump-card" v-if="getSubsystemStrategy(sub)?.equipment.pump || getSubsystemStrategy(sub)?.equipment.chw_pump || getSubsystemStrategy(sub)?.equipment.hw_pump">
+                  <div class="pump-card" v-if="getAirCooledStrategy(sub)?.equipment.pump || getAirCooledStrategy(sub)?.equipment.chw_pump || getAirCooledStrategy(sub)?.equipment.hw_pump">
                     <table class="pump-table">
                       <thead>
                         <tr>
@@ -1474,20 +1489,20 @@ function updateEquipmentField(sub: Subsystem, key: string, field: string, value:
                         </tr>
                       </thead>
                       <tbody>
-                        <tr v-if="getSubsystemStrategy(sub)?.equipment.pump">
+                        <tr v-if="getAirCooledStrategy(sub)?.equipment.pump">
                           <td class="pt-name">{{ t('scheme.strategy.pump') }}</td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.pump?.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'pump', 'min_freq', Number(val || 0))" /></td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.pump?.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'pump', 'max_freq', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getAirCooledStrategy(sub)?.equipment.pump?.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'pump', 'min_freq', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getAirCooledStrategy(sub)?.equipment.pump?.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'pump', 'max_freq', Number(val || 0))" /></td>
                         </tr>
-                        <tr v-if="getSubsystemStrategy(sub)?.equipment.chw_pump">
+                        <tr v-if="getAirCooledStrategy(sub)?.equipment.chw_pump">
                           <td class="pt-name">{{ t('scheme.strategy.chwPumpAlt') }}</td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.chw_pump?.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'chw_pump', 'min_freq', Number(val || 0))" /></td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.chw_pump?.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'chw_pump', 'max_freq', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getAirCooledStrategy(sub)?.equipment.chw_pump?.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'chw_pump', 'min_freq', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getAirCooledStrategy(sub)?.equipment.chw_pump?.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'chw_pump', 'max_freq', Number(val || 0))" /></td>
                         </tr>
-                        <tr v-if="getSubsystemStrategy(sub)?.equipment.hw_pump">
+                        <tr v-if="getAirCooledStrategy(sub)?.equipment.hw_pump">
                           <td class="pt-name">{{ t('scheme.strategy.hwPumpAlt') }}</td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.hw_pump?.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'hw_pump', 'min_freq', Number(val || 0))" /></td>
-                          <td><el-input-number size="small" controls-position="right" :model-value="getSubsystemStrategy(sub)?.equipment.hw_pump?.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'hw_pump', 'max_freq', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getAirCooledStrategy(sub)?.equipment.hw_pump?.min_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'hw_pump', 'min_freq', Number(val || 0))" /></td>
+                          <td><el-input-number size="small" controls-position="right" :model-value="getAirCooledStrategy(sub)?.equipment.hw_pump?.max_freq" :min="1" :max="50" @update:model-value="(val) => updateEquipmentField(sub, 'hw_pump', 'max_freq', Number(val || 0))" /></td>
                         </tr>
                       </tbody>
                     </table>

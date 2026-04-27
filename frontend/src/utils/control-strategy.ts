@@ -2,6 +2,7 @@ import { randomUUID } from './uuid'
 import type { BuildingZone, DaySchedule } from '@/types/building'
 import type {
   AirCooledStage,
+  AirCooledStrategy,
   ControlStrategy,
   LoadDistributionConfig,
   LoadDistributionGroup,
@@ -10,6 +11,8 @@ import type {
   StrategyValueProfile,
   StrategyZoneSummary,
   Subsystem,
+  ChillerPlantStrategy,
+  ChillerStage,
   SubsystemControlStrategy,
   SubsystemDerived,
 } from '@/types/system-scheme'
@@ -145,7 +148,7 @@ export function buildDefaultLoadDistribution(
   return defaultLoadDistribution(subsystems, derived, zones)
 }
 
-function defaultChillerStages(sub: Subsystem, derivedSub?: SubsystemDerived) {
+function defaultChillerStages(sub: Subsystem, derivedSub?: SubsystemDerived): ChillerStage[] {
   const comboMap = new Map((derivedSub?.combos || []).map((combo) => [combo.id, combo]))
   const units: Array<{ comboId: string; cooling: number }> = []
   for (const combo of sub.combos) {
@@ -171,7 +174,7 @@ function defaultChillerStages(sub: Subsystem, derivedSub?: SubsystemDerived) {
   }
   const counts: Record<string, number> = {}
   const stageCaps: Record<string, number> = {}
-  const out = []
+  const out: ChillerStage[] = []
   units.forEach((unit, idx) => {
     counts[unit.comboId] = (counts[unit.comboId] || 0) + 1
     stageCaps[unit.comboId] = unit.cooling
@@ -406,19 +409,23 @@ export function ensureControlStrategy(
       : null
     if (rawSchedules?.length) current.run_schedules = rawSchedules.slice(0, 20)
     const rawWater = (rawSub as { water_temp?: Record<string, unknown> }).water_temp || {}
-    if (sub.subsystem_type === 'chiller_plant') {
+    if (current.subsystem_type === 'chiller_plant') {
       current.water_temp.chw_supply = ensureProfile(rawWater.chw_supply, current.water_temp.chw_supply.fixed_value, false)
       current.water_temp.chw_delta = ensureProfile(rawWater.chw_delta, current.water_temp.chw_delta.fixed_value, true)
       current.water_temp.approach = ensureProfile(rawWater.approach, current.water_temp.approach.fixed_value, false)
       current.water_temp.cw_delta = ensureProfile(rawWater.cw_delta, current.water_temp.cw_delta.fixed_value, true)
-    } else if (sub.subsystem_type === 'air_cooled') {
+    } else if (current.subsystem_type === 'air_cooled') {
       current.water_temp.cooling_supply = ensureProfile(rawWater.cooling_supply, current.water_temp.cooling_supply.fixed_value, false)
       current.water_temp.cooling_delta = ensureProfile(rawWater.cooling_delta, current.water_temp.cooling_delta.fixed_value, true)
       current.water_temp.heating_supply = ensureProfile(rawWater.heating_supply, current.water_temp.heating_supply.fixed_value, false)
       current.water_temp.heating_delta = ensureProfile(rawWater.heating_delta, current.water_temp.heating_delta.fixed_value, true)
     }
     const rawEquipment = (rawSub as { equipment?: Record<string, unknown> }).equipment || {}
-    current.equipment = { ...current.equipment, ...rawEquipment }
+    if (current.subsystem_type === 'chiller_plant') {
+      current.equipment = { ...current.equipment, ...rawEquipment } as ChillerPlantStrategy['equipment']
+    } else if (current.subsystem_type === 'air_cooled') {
+      current.equipment = { ...current.equipment, ...rawEquipment } as AirCooledStrategy['equipment']
+    }
     systemStrategies[sid] = current
   }
 

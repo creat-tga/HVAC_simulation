@@ -334,6 +334,7 @@ export default {
     },
     internalGains: {
       title: 'Internal Gains',
+      peopleShort: 'People',
       people: 'People Density(p/m²)',
       lighting: 'Lighting Power(W/m²)',
       equipment: 'Equipment Power(W/m²)',

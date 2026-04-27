@@ -2,14 +2,15 @@
 import { onMounted, ref, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Plus, Delete, VideoPlay, OfficeBuilding } from '@element-plus/icons-vue'
+import { Plus, Delete, VideoPlay, OfficeBuilding, Edit } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
 import { useTaskTrackerStore } from '@/stores/taskTracker'
 import { getProject } from '@/api/projects'
-import { createBuilding, deleteBuilding } from '@/api/buildings'
+import { createBuilding, deleteBuilding, updateBuilding } from '@/api/buildings'
 import { getSimulations, runLoadSimulation } from '@/api/simulation'
 import type { SimulationResult } from '@/types/simulation'
 import type { Project } from '@/types/project'
+import type { Building } from '@/types/building'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getClimateZone } from '@/data/regions'
 import { useResponsive } from '@/composables/useResponsive'
@@ -133,6 +134,35 @@ async function handleDeleteBuilding(buildingId: string) {
   await store.fetchBuildings(projectId)
 }
 
+const editDialogVisible = ref(false)
+const editForm = reactive<{ id: string; name: string }>({
+  id: '',
+  name: '',
+})
+
+function openEditDialog(row: Building, event?: MouseEvent) {
+  event?.stopPropagation()
+  editForm.id = row.id
+  editForm.name = row.name
+  editDialogVisible.value = true
+}
+
+async function confirmEdit() {
+  const name = editForm.name.trim()
+  if (!name) {
+    ElMessage.warning(t('building.pleaseInputName'))
+    return
+  }
+  try {
+    await updateBuilding(projectId, editForm.id, { name })
+    editDialogVisible.value = false
+    await store.fetchBuildings(projectId)
+    ElMessage.success(t('building.updateSuccess'))
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || t('common.error'))
+  }
+}
+
 function openBuilding(buildingId: string) {
   router.push(`/projects/${projectId}/buildings/${buildingId}`)
 }
@@ -211,16 +241,26 @@ async function handleRunAllLoads() {
           >
             {{ simMap[row.id] ? t('viz.hasResult') : t('building.noSimulation') }}
           </el-tag>
-          <el-button
-            class="building-card-del"
-            type="danger"
-            text
-            circle
-            :icon="Delete"
-            size="small"
-            @click.stop="handleDeleteBuilding(row.id)"
-            :title="t('common.delete')"
-          />
+          <div class="building-card-actions" @click.stop>
+            <el-button
+              type="primary"
+              text
+              circle
+              :icon="Edit"
+              size="small"
+              @click="openEditDialog(row, $event)"
+              :title="t('common.edit') || '编辑'"
+            />
+            <el-button
+              type="danger"
+              text
+              circle
+              :icon="Delete"
+              size="small"
+              @click="handleDeleteBuilding(row.id)"
+              :title="t('common.delete')"
+            />
+          </div>
         </div>
 
         <div class="building-card-meta">
@@ -300,15 +340,35 @@ async function handleRunAllLoads() {
         <div class="bcard-header">
           <div class="bcard-title">
             <div class="bcard-name-row">
-              <span class="bcard-name">{{ row.name }}</span>
-              <el-tag
-                :type="simMap[row.id] ? 'success' : 'info'"
-                size="small"
-                effect="light"
-                class="bcard-status"
-              >
-                {{ simMap[row.id] ? t('viz.hasResult') : t('building.noSimulation') }}
-              </el-tag>
+              <div class="bcard-name-main">
+                <span class="bcard-name">{{ row.name }}</span>
+                <el-tag
+                  :type="simMap[row.id] ? 'success' : 'info'"
+                  size="small"
+                  effect="light"
+                  class="bcard-status"
+                >
+                  {{ simMap[row.id] ? t('viz.hasResult') : t('building.noSimulation') }}
+                </el-tag>
+              </div>
+              <div class="bcard-card-actions" @click.stop>
+                <el-button
+                  type="primary"
+                  :icon="Edit"
+                  size="small"
+                  text
+                  @click="openEditDialog(row, $event)"
+                  :title="t('common.edit') || '编辑'"
+                />
+                <el-button
+                  type="danger"
+                  :icon="Delete"
+                  size="small"
+                  text
+                  @click="handleDeleteBuilding(row.id)"
+                  :title="t('common.delete')"
+                />
+              </div>
             </div>
             <div class="bcard-meta">
               <span class="meta-pill meta-pill--area">
@@ -387,15 +447,6 @@ async function handleRunAllLoads() {
           <el-button type="primary" size="small" @click.stop="openBuilding(row.id)">
             {{ t('building.config') }}
           </el-button>
-          <el-button
-            type="danger"
-            size="small"
-            text
-            :icon="Delete"
-            @click.stop="handleDeleteBuilding(row.id)"
-          >
-            {{ t('common.delete') }}
-          </el-button>
         </div>
       </div>
     </div>
@@ -405,6 +456,18 @@ async function handleRunAllLoads() {
         {{ t('building.add') }}
       </el-button>
     </el-empty>
+
+    <el-dialog v-model="editDialogVisible" :title="t('building.editInfo')" width="420px">
+      <el-form label-width="96px">
+        <el-form-item :label="t('building.name')" required>
+          <el-input v-model="editForm.name" :maxlength="30" show-word-limit :placeholder="t('building.pleaseInputName')" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="confirmEdit">{{ t('common.save') }}</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 移动端底部固定主操作栏 -->
     <div v-if="isMobile" class="mobile-action-bar">
@@ -586,10 +649,26 @@ async function handleRunAllLoads() {
   justify-content: space-between;
   gap: 10px;
 }
+.bcard-name-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
 .bcard-name {
   font-size: 17px;
   font-weight: 700;
   color: #0f172a;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bcard-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
 }
 .bcard-meta {
   display: flex;
@@ -744,8 +823,12 @@ async function handleRunAllLoads() {
     gap: 8px;
     margin-bottom: 10px;
   }
-  .building-card-del {
+  .building-card-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
     margin-left: auto;
+    flex: 0 0 auto;
   }
   .building-name {
     font-size: 16px;
@@ -753,6 +836,10 @@ async function handleRunAllLoads() {
     color: #1e293b;
     flex: 0 1 auto;
     margin-right: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .building-tags {
     display: flex;

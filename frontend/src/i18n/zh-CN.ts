@@ -331,6 +331,7 @@ export default {
     },
     internalGains: {
       title: '内扰参数',
+      peopleShort: '人员',
       people: '人员密度(人/m²)',
       lighting: '照明功率密度(W/m²)',
       equipment: '设备功率密度(W/m²)',

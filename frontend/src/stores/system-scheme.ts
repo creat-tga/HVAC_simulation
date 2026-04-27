@@ -11,7 +11,6 @@ import { computed, ref, shallowRef } from 'vue'
 import {
   createScheme,
   deleteScheme,
-  getScheme,
   getSchemeBundle,
   getSchemeDerived,
   getSchemeSummary,

@@ -92,7 +92,7 @@ const router = createRouter({
           path: 'buildings/:buildingId',
           name: 'building',
           component: () => import('@/views/BuildingView.vue'),
-          meta: { title: '建筑信息', mobileBack: (r: any) => `/projects/${r.params.projectId}/building` },
+          meta: { title: '建筑信息', mobileBack: (r: any) => `/projects/${r.params.projectId}/building`, mobileCustomTopbar: true, mobileNoTitle: true },
         },
         {
           path: 'buildings/:buildingId/load',

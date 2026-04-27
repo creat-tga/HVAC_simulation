@@ -113,12 +113,12 @@ const dateOptions = computed(() => months.map(m => ({
   children: Array.from({ length: daysInMonth(m.v) }, (_, i) => ({ value: i + 1, label: `${i + 1}日` }))
 })))
 const startDateValue = computed<[number, number]>({
-  get: () => [props.modelValue.start_month, props.modelValue.start_day],
-  set: ([month, day]) => patch({ start_month: month, start_day: day })
+  get: (): [number, number] => [props.modelValue.start_month, props.modelValue.start_day],
+  set: ([month, day]: [number, number]) => patch({ start_month: month, start_day: day })
 })
 const endDateValue = computed<[number, number]>({
-  get: () => [props.modelValue.end_month, props.modelValue.end_day],
-  set: ([month, day]) => patch({ end_month: month, end_day: day })
+  get: (): [number, number] => [props.modelValue.end_month, props.modelValue.end_day],
+  set: ([month, day]: [number, number]) => patch({ end_month: month, end_day: day })
 })
 watch(() => props.modelValue.start_month, m => {
   const max = daysInMonth(m)
@@ -1086,11 +1086,37 @@ body.sched-dragging * {
   .heatmap-wrap.is-binary .hm-ticks {
     display: none;
   }
+  .heatmap-wrap:not(.is-binary) .hm-values {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    height: auto;
+    gap: 4px;
+  }
+  .heatmap-wrap:not(.is-binary) .hm-value {
+    min-height: 22px;
+  }
+  .heatmap-wrap:not(.is-binary) .heatmap-row {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    height: auto;
+    gap: 4px;
+  }
+  .heatmap-wrap:not(.is-binary) .hm-cell {
+    height: 34px;
+  }
+  .heatmap-wrap:not(.is-binary) .hm-ticks {
+    display: none;
+  }
 }
 
 @media (max-width: 420px) {
   .heatmap-wrap.is-binary .heatmap-row {
     grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+  .heatmap-wrap:not(.is-binary) .hm-values,
+  .heatmap-wrap:not(.is-binary) .heatmap-row {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+  .heatmap-wrap:not(.is-binary) .hm-cell {
+    height: 32px;
   }
 }
 

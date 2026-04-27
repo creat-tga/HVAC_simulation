@@ -149,7 +149,7 @@ async function save() {
           <el-icon :size="16"><Connection /></el-icon>
           <span>{{ t('account.language') || '语言' }}</span>
         </div>
-        <el-radio-group :model-value="currentLang" @update:model-value="switchLang" size="small">
+        <el-radio-group :model-value="currentLang" @update:model-value="(val) => switchLang(val as 'zh-CN' | 'en-US')" size="small">
           <el-radio-button label="zh-CN">中文</el-radio-button>
           <el-radio-button label="en-US">English</el-radio-button>
         </el-radio-group>
