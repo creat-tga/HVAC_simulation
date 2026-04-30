@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.schemas.building import BuildingCreate, BuildingUpdate, BuildingResponse
 from app.services import building_service
+from app.services.building_service import BuildingLimitError
 
 router = APIRouter(prefix="/projects/{project_id}/buildings", tags=["建筑管理"])
 
@@ -38,7 +39,10 @@ async def create_building(
     db: AsyncSession = Depends(get_db),
 ):
     """创建新建筑"""
-    return await building_service.create_building(db, project_id, data)
+    try:
+        return await building_service.create_building(db, project_id, data)
+    except BuildingLimitError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.put("/{building_id}", response_model=BuildingResponse)

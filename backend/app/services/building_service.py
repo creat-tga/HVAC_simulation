@@ -1,11 +1,17 @@
 import uuid
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.building import Building
 from app.models.simulation import SimulationResult
 from app.schemas.building import BuildingCreate, BuildingUpdate
+
+MAX_BUILDINGS_PER_PROJECT = 10
+
+
+class BuildingLimitError(ValueError):
+    pass
 
 
 async def get_buildings(
@@ -23,9 +29,22 @@ async def get_building(db: AsyncSession, building_id: uuid.UUID) -> Building | N
     return await db.get(Building, building_id)
 
 
+async def count_project_buildings(db: AsyncSession, project_id: uuid.UUID) -> int:
+    result = await db.execute(
+        select(func.count()).select_from(Building).where(Building.project_id == project_id)
+    )
+    return result.scalar_one()
+
+
+async def ensure_project_can_add_building(db: AsyncSession, project_id: uuid.UUID) -> None:
+    if await count_project_buildings(db, project_id) >= MAX_BUILDINGS_PER_PROJECT:
+        raise BuildingLimitError(f"一个工程最多建立{MAX_BUILDINGS_PER_PROJECT}个建筑")
+
+
 async def create_building(
     db: AsyncSession, project_id: uuid.UUID, data: BuildingCreate
 ) -> Building:
+    await ensure_project_can_add_building(db, project_id)
     building = Building(project_id=project_id, **data.model_dump())
     db.add(building)
     await db.commit()

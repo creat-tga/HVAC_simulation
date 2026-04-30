@@ -18,6 +18,7 @@ from app.models.library import (
     BuildingTemplate,
 )
 from app.models.building import Building
+from app.services.building_service import ensure_project_can_add_building
 from app.simulation.energyplus.weather_utils import parse_epw_header
 
 
@@ -491,6 +492,7 @@ async def clone_template_to_project(
     tpl = await db.get(BuildingTemplate, tpl_id)
     if not tpl:
         raise ValueError("模板不存在")
+    await ensure_project_can_add_building(db, project_id)
     bld = Building(
         project_id=project_id,
         name=override_name or tpl.name,

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref, reactive, watch } from 'vue'
+import { computed, onMounted, ref, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Plus, Delete, VideoPlay, OfficeBuilding, Edit } from '@element-plus/icons-vue'
+import { Plus, Delete, VideoPlay, Edit } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
 import { useTaskTrackerStore } from '@/stores/taskTracker'
 import { getProject } from '@/api/projects'
@@ -26,6 +26,8 @@ const { t } = useI18n()
 
 const project = ref<Project | null>(null)
 const projectId = route.params.projectId as string
+const MAX_BUILDINGS_PER_PROJECT = 10
+const isBuildingLimitReached = computed(() => store.buildings.length >= MAX_BUILDINGS_PER_PROJECT)
 
 // Simulation results per building
 const simMap = reactive<Record<string, SimulationResult | null>>({})
@@ -58,6 +60,10 @@ function getBuildingArea(b: { total_area?: number | null; zones?: { area: number
 
 function getZoneCount(b: { zones?: unknown[] | null }): number {
   return b.zones?.length || 0
+}
+
+function getBuildingSummary(b: { total_area?: number | null; zones?: { area: number }[] | null }): string {
+  return `${formatNum(getBuildingArea(b))}㎡(${getZoneCount(b)}个分区)`
 }
 
 function getCoolPerArea(b: { id: string; total_area?: number | null; zones?: { area: number }[] | null }): string {
@@ -98,13 +104,19 @@ onMounted(async () => {
   await store.fetchBuildings(projectId)
 })
 
-async function handleAddBuilding() {
-  const climate_zone = project.value?.location
-    ? getClimateZone(project.value.location.split('-')[0])
-    : undefined
+const addDialogVisible = ref(false)
+const addSubmitting = ref(false)
+const addForm = reactive<{ name: string }>({
+  name: '',
+})
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function getNextBuildingName(): string {
   const baseName = t('building.defaultName')
-  // Find next available number by scanning existing building names
-  const nameRegex = new RegExp(`^${baseName}\\s*(\\d+)$`)
+  const nameRegex = new RegExp(`^${escapeRegExp(baseName)}\\s*(\\d+)$`)
   let maxIdx = 0
   for (const b of store.buildings) {
     const m = (b.name || '').match(nameRegex)
@@ -113,17 +125,49 @@ async function handleAddBuilding() {
       if (!Number.isNaN(n) && n > maxIdx) maxIdx = n
     }
   }
-  const nextIdx = maxIdx + 1
+  return `${baseName} ${maxIdx + 1}`
+}
+
+function handleAddBuilding() {
+  if (isBuildingLimitReached.value) {
+    ElMessage.warning(t('building.limitReached', { max: MAX_BUILDINGS_PER_PROJECT }))
+    return
+  }
+  addForm.name = getNextBuildingName()
+  addDialogVisible.value = true
+}
+
+async function confirmAddBuilding() {
+  if (isBuildingLimitReached.value) {
+    ElMessage.warning(t('building.limitReached', { max: MAX_BUILDINGS_PER_PROJECT }))
+    return
+  }
+  const name = addForm.name.trim()
+  if (!name) {
+    ElMessage.warning(t('building.pleaseInputName'))
+    return
+  }
+  const climate_zone = project.value?.location
+    ? getClimateZone(project.value.location.split('-')[0])
+    : undefined
   const defaultZoneName = `${t('building.zone.defaultPrefix')}1`
-  const { data } = await createBuilding(projectId, {
-    name: `${baseName} ${nextIdx}`,
-    building_type: 'office',
-    climate_zone,
-    zones: [createDefaultZone(defaultZoneName)],
-  })
-  ElMessage.success(t('building.createSuccess'))
-  await store.fetchBuildings(projectId)
-  router.push(`/projects/${projectId}/buildings/${data.id}`)
+  addSubmitting.value = true
+  try {
+    const { data } = await createBuilding(projectId, {
+      name,
+      building_type: 'office',
+      climate_zone,
+      zones: [createDefaultZone(defaultZoneName)],
+    })
+    ElMessage.success(t('building.createSuccess'))
+    addDialogVisible.value = false
+    await store.fetchBuildings(projectId)
+    router.push(`/projects/${projectId}/buildings/${data.id}`)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || t('common.error'))
+  } finally {
+    addSubmitting.value = false
+  }
 }
 
 async function handleDeleteBuilding(buildingId: string) {
@@ -216,7 +260,13 @@ async function handleRunAllLoads() {
         <el-button :icon="VideoPlay" @click="handleRunAllLoads" :disabled="store.buildings.length === 0">
           {{ t('building.runAllLoads') }}
         </el-button>
-        <el-button type="primary" :icon="Plus" @click="handleAddBuilding">
+        <el-button
+          type="primary"
+          :icon="Plus"
+          :disabled="isBuildingLimitReached"
+          :title="isBuildingLimitReached ? t('building.limitReached', { max: MAX_BUILDINGS_PER_PROJECT }) : t('building.add')"
+          @click="handleAddBuilding"
+        >
           {{ t('building.add') }}
         </el-button>
       </div>
@@ -233,49 +283,33 @@ async function handleRunAllLoads() {
         @click="openBuilding(row.id)"
       >
         <div class="building-card-header">
-          <span class="building-name">{{ row.name }}</span>
-          <el-tag
-            :type="simMap[row.id] ? 'success' : 'info'"
-            size="small"
-            effect="light"
-          >
-            {{ simMap[row.id] ? t('viz.hasResult') : t('building.noSimulation') }}
-          </el-tag>
+          <div class="building-title-line">
+            <span class="building-name">{{ row.name }}</span>
+            <span class="building-summary">{{ getBuildingSummary(row) }}</span>
+          </div>
           <div class="building-card-actions" @click.stop>
             <el-button
+              class="building-action-button"
               type="primary"
               text
               circle
               :icon="Edit"
-              size="small"
               @click="openEditDialog(row, $event)"
               :title="t('common.edit') || '编辑'"
             />
             <el-button
+              class="building-action-button"
               type="danger"
               text
               circle
               :icon="Delete"
-              size="small"
               @click="handleDeleteBuilding(row.id)"
               :title="t('common.delete')"
             />
           </div>
         </div>
 
-        <div class="building-card-meta">
-          <span class="meta-pill meta-pill--area">
-            <el-icon class="meta-pill-icon"><OfficeBuilding /></el-icon>
-            <span class="meta-pill-value">{{ formatNum(getBuildingArea(row)) }}</span>
-            <span class="meta-pill-unit">m²</span>
-          </span>
-          <span class="meta-pill">
-            <span class="meta-pill-value">{{ getZoneCount(row) }}</span>
-            <span class="meta-pill-unit">个分区</span>
-          </span>
-          <el-tag v-if="row.building_type" size="small" type="info" effect="plain">
-            {{ t(`building.types.${row.building_type}`) }}
-          </el-tag>
+        <div v-if="row.floor_count" class="building-card-meta">
           <el-tag v-if="row.floor_count" size="small" effect="plain">
             {{ row.floor_count }} 层
           </el-tag>
@@ -341,48 +375,31 @@ async function handleRunAllLoads() {
           <div class="bcard-title">
             <div class="bcard-name-row">
               <div class="bcard-name-main">
-                <span class="bcard-name">{{ row.name }}</span>
-                <el-tag
-                  :type="simMap[row.id] ? 'success' : 'info'"
-                  size="small"
-                  effect="light"
-                  class="bcard-status"
-                >
-                  {{ simMap[row.id] ? t('viz.hasResult') : t('building.noSimulation') }}
-                </el-tag>
+                <div class="building-title-line">
+                  <span class="bcard-name">{{ row.name }}</span>
+                  <span class="building-summary">{{ getBuildingSummary(row) }}</span>
+                </div>
               </div>
               <div class="bcard-card-actions" @click.stop>
                 <el-button
+                  class="building-action-button"
                   type="primary"
                   :icon="Edit"
-                  size="small"
                   text
                   @click="openEditDialog(row, $event)"
                   :title="t('common.edit') || '编辑'"
                 />
                 <el-button
+                  class="building-action-button"
                   type="danger"
                   :icon="Delete"
-                  size="small"
                   text
                   @click="handleDeleteBuilding(row.id)"
                   :title="t('common.delete')"
                 />
               </div>
             </div>
-            <div class="bcard-meta">
-              <span class="meta-pill meta-pill--area">
-                <el-icon class="meta-pill-icon"><OfficeBuilding /></el-icon>
-                <span class="meta-pill-value">{{ formatNum(getBuildingArea(row)) }}</span>
-                <span class="meta-pill-unit">m²</span>
-              </span>
-              <span class="meta-pill">
-                <span class="meta-pill-value">{{ getZoneCount(row) }}</span>
-                <span class="meta-pill-unit">个分区</span>
-              </span>
-              <el-tag v-if="row.building_type" size="small" type="info" effect="plain">
-                {{ t(`building.types.${row.building_type}`) }}
-              </el-tag>
+            <div v-if="row.floor_count" class="bcard-meta">
               <el-tag v-if="row.floor_count" size="small" effect="plain">
                 {{ row.floor_count }} 层
               </el-tag>
@@ -434,20 +451,6 @@ async function handleRunAllLoads() {
             </div>
           </div>
         </div>
-
-        <div class="bcard-actions" @click.stop>
-          <el-button
-            size="small"
-            :icon="VideoPlay"
-            :loading="runningBuildings.has(row.id)"
-            @click.stop="handleRunLoad(row)"
-          >
-            {{ t('building.runLoad') }}
-          </el-button>
-          <el-button type="primary" size="small" @click.stop="openBuilding(row.id)">
-            {{ t('building.config') }}
-          </el-button>
-        </div>
       </div>
     </div>
 
@@ -456,6 +459,24 @@ async function handleRunAllLoads() {
         {{ t('building.add') }}
       </el-button>
     </el-empty>
+
+    <el-dialog v-model="addDialogVisible" :title="t('building.createDialogTitle')" width="420px">
+      <el-form label-width="96px" @submit.prevent>
+        <el-form-item :label="t('building.name')" required>
+          <el-input
+            v-model="addForm.name"
+            :maxlength="30"
+            show-word-limit
+            :placeholder="t('building.pleaseInputName')"
+            @keyup.enter="confirmAddBuilding"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button :disabled="addSubmitting" @click="addDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="addSubmitting" @click="confirmAddBuilding">{{ t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="editDialogVisible" :title="t('building.editInfo')" width="420px">
       <el-form label-width="96px">
@@ -483,6 +504,7 @@ async function handleRunAllLoads() {
         class="mab-btn"
         type="primary"
         :icon="Plus"
+        :disabled="isBuildingLimitReached"
         @click="handleAddBuilding"
       >
         {{ t('building.add') }}
@@ -655,6 +677,13 @@ async function handleRunAllLoads() {
   gap: 10px;
   min-width: 0;
 }
+.building-title-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
 .bcard-name {
   font-size: 17px;
   font-weight: 700;
@@ -663,6 +692,25 @@ async function handleRunAllLoads() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.building-summary {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: #64748b;
+  flex: 0 0 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.building-action-button {
+  min-width: 34px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+}
+.project-view :deep(.building-action-button .el-icon) {
+  font-size: 18px;
 }
 .bcard-card-actions {
   display: inline-flex;
@@ -770,12 +818,6 @@ async function handleRunAllLoads() {
   color: #94a3b8;
   margin-left: 2px;
 }
-.bcard-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding-top: 4px;
-}
 .project-view :deep(.el-empty) {
   padding: 60px 0;
   background: #ffffff;
@@ -805,6 +847,7 @@ async function handleRunAllLoads() {
   }
 
   .building-cards {
+    padding: 0 12px;
     display: flex;
     flex-direction: column;
     gap: 12px;

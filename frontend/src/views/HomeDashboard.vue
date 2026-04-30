@@ -5,14 +5,13 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectStore } from '@/stores/project'
 import { listWeatherFiles, listEquipment, listBuildingTemplates } from '@/api/library'
+import { adminListUsers } from '@/api/users'
 import {
   FolderOpened,
   OfficeBuilding,
   Sunny,
   Setting,
   User,
-  Lock,
-  Right,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -20,7 +19,11 @@ const { t } = useI18n()
 const auth = useAuthStore()
 const projectStore = useProjectStore()
 
-const stats = ref({ projects: 0, buildings: 0, weather: 0, equipment: 0 })
+const stats = ref({ projects: 0, buildings: 0, weather: 0, equipment: 0, activeUsers: undefined as number | undefined })
+
+interface CardMetric {
+  value?: number
+}
 
 interface Card {
   key: string
@@ -29,7 +32,7 @@ interface Card {
   icon: any
   color: string
   path: string
-  count?: number
+  metric?: CardMetric
 }
 
 const cards = computed<Card[]>(() => {
@@ -41,7 +44,7 @@ const cards = computed<Card[]>(() => {
       icon: FolderOpened,
       color: '#0891b2',
       path: '/projects',
-      count: stats.value.projects,
+      metric: { value: stats.value.projects },
     },
     {
       key: 'buildings',
@@ -50,7 +53,7 @@ const cards = computed<Card[]>(() => {
       icon: OfficeBuilding,
       color: '#0d9488',
       path: '/library/buildings',
-      count: stats.value.buildings,
+      metric: { value: stats.value.buildings },
     },
     {
       key: 'weather',
@@ -59,7 +62,7 @@ const cards = computed<Card[]>(() => {
       icon: Sunny,
       color: '#f59e0b',
       path: '/library/weather',
-      count: stats.value.weather,
+      metric: { value: stats.value.weather },
     },
     {
       key: 'equipment',
@@ -68,25 +71,27 @@ const cards = computed<Card[]>(() => {
       icon: Setting,
       color: '#7c3aed',
       path: '/library/equipment',
-      count: stats.value.equipment,
+      metric: { value: stats.value.equipment },
     },
-    {
+  ]
+  if (auth.isAdmin) {
+    list.push({
+      key: 'management',
+      title: t('dashboard.account.managementTitle'),
+      desc: t('dashboard.account.managementDesc'),
+      icon: User,
+      color: '#dc2626',
+      path: '/admin/users',
+      metric: { value: stats.value.activeUsers },
+    })
+  } else {
+    list.push({
       key: 'account',
       title: t('dashboard.account.title'),
       desc: t('dashboard.account.desc'),
       icon: User,
       color: '#ef4444',
       path: '/account',
-    },
-  ]
-  if (auth.isAdmin) {
-    list.push({
-      key: 'admin',
-      title: t('dashboard.account.adminTitle'),
-      desc: t('dashboard.account.adminDesc'),
-      icon: Lock,
-      color: '#dc2626',
-      path: '/admin/users',
     })
   }
   return list
@@ -117,6 +122,12 @@ async function loadStats() {
     const { data } = await listEquipment({ scope: 'all' })
     stats.value.equipment = data.length
   } catch { /* ignore */ }
+  if (auth.isAdmin) {
+    try {
+      const { data } = await adminListUsers({ status: 'active', role: 'all' })
+      stats.value.activeUsers = data.filter(user => user.status === 'active').length
+    } catch { /* ignore */ }
+  }
 }
 
 onMounted(loadStats)
@@ -139,16 +150,6 @@ function go(path: string) {
       </div>
     </header>
 
-    <section class="stats-row">
-      <div class="stat-pill" v-for="s in cards.slice(0, 4)" :key="s.key" :style="{ '--c': s.color } as any">
-        <el-icon :size="18"><component :is="s.icon" /></el-icon>
-        <div>
-          <div class="stat-num">{{ s.count ?? '-' }}</div>
-          <div class="stat-lab">{{ s.title }}</div>
-        </div>
-      </div>
-    </section>
-
     <section class="cards-section">
       <h2 class="section-title">模块入口</h2>
       <div class="cards-grid">
@@ -164,8 +165,8 @@ function go(path: string) {
             <h3>{{ c.title }}</h3>
             <p>{{ c.desc }}</p>
           </div>
-          <div class="card-arrow">
-            <el-icon :size="16"><Right /></el-icon>
+          <div v-if="c.metric" class="card-metric">
+            <div class="card-metric-value">{{ c.metric.value ?? '-' }}</div>
           </div>
         </div>
       </div>
@@ -204,7 +205,10 @@ function go(path: string) {
   filter: blur(20px);
   pointer-events: none;
 }
-.hero-inner { position: relative; z-index: 1; }
+.hero-inner {
+  position: relative;
+  z-index: 1;
+}
 .hero-tag {
   display: inline-block;
   padding: 4px 10px;
@@ -220,7 +224,7 @@ function go(path: string) {
   margin: 0 0 8px 0;
   font-size: 30px;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   color: #f1f5f9;
 }
 .hero-title .username {
@@ -229,33 +233,11 @@ function go(path: string) {
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
-.hero-sub { margin: 0; color: #94a3b8; font-size: 14px; }
-
-/* ----- Stats ----- */
-.stats-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-bottom: 28px;
+.hero-sub {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 14px;
 }
-.stat-pill {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
-  background: rgba(255, 255, 255, 0.85);
-  border: 1px solid rgba(226, 232, 240, 0.6);
-  border-radius: 14px;
-  color: var(--c);
-  transition: all 0.18s ease;
-}
-.stat-pill:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
-  border-color: var(--c);
-}
-.stat-num { font-size: 22px; font-weight: 700; color: #0f172a; line-height: 1; }
-.stat-lab { font-size: 12px; color: #64748b; margin-top: 4px; }
 
 /* ----- Cards ----- */
 .section-title {
@@ -271,7 +253,8 @@ function go(path: string) {
   gap: 16px;
 }
 .entry-card {
-  display: flex;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   padding: 18px 20px;
@@ -298,7 +281,6 @@ function go(path: string) {
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
 }
 .entry-card:hover::before { opacity: 1; }
-.entry-card:hover .card-arrow { transform: translateX(4px); color: var(--c); }
 
 .card-icon {
   width: 44px; height: 44px;
@@ -327,15 +309,64 @@ function go(path: string) {
   line-clamp: 2;
   -webkit-box-orient: vertical;
 }
-.card-arrow {
-  color: #cbd5e1;
-  transition: all 0.22s ease;
-  flex-shrink: 0;
+.card-metric {
+  position: relative;
+  z-index: 1;
+  min-width: 64px;
+  padding-left: 14px;
+  border-left: 1px solid rgba(226, 232, 240, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+}
+.card-metric-value {
+  color: #64748b;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1;
 }
 
 @media (max-width: 768px) {
   .dashboard { padding: 16px; }
-  .dash-hero { padding: 22px; }
-  .hero-title { font-size: 22px; }
+  .dash-hero {
+    padding: 22px;
+  }
+  .hero-title {
+    font-size: 22px;
+  }
+  .cards-grid { grid-template-columns: 1fr; }
+  .entry-card {
+    grid-template-columns: 58px minmax(0, 1fr) 66px;
+    gap: 16px;
+    min-height: 118px;
+    padding: 20px 18px;
+    border-radius: 16px;
+  }
+  .card-icon { width: 58px; height: 58px; border-radius: 14px; }
+  .card-body h3 { font-size: 18px; }
+  .card-body p { font-size: 14px; line-height: 1.55; }
+  .card-metric {
+    min-width: 54px;
+    padding-left: 16px;
+  }
+  .card-metric-value { font-size: 28px; }
+}
+
+@media (max-width: 420px) {
+  .entry-card {
+    grid-template-columns: 52px minmax(0, 1fr) 52px;
+    gap: 12px;
+    min-height: 112px;
+    padding: 18px 14px;
+  }
+  .card-icon { width: 52px; height: 52px; }
+  .card-body h3 { font-size: 17px; }
+  .card-body p { font-size: 13.5px; }
+  .card-metric {
+    min-width: 50px;
+    padding-left: 10px;
+  }
+  .card-metric-value { font-size: 26px; }
 }
 </style>

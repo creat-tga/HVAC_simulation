@@ -26,6 +26,8 @@ const { t } = useI18n()
 const authStore = useAuthStore()
 const { isMobile } = useResponsive()
 
+const SIDEBAR_NAV_COLOR = 'var(--brand-primary)'
+
 interface NavItem {
   key: string
   label: string
@@ -37,15 +39,15 @@ interface NavItem {
 
 const navItems = computed<NavItem[]>(() => {
   const items: NavItem[] = [
-    { key: 'home', label: t('dashboard.nav.home'), icon: HomeFilled, path: '/', matches: ['home'], color: '#0891b2' },
-    { key: 'projects', label: t('dashboard.nav.projects'), icon: FolderOpened, path: '/projects', matches: ['projectsList'], color: '#0891b2' },
-    { key: 'buildings', label: t('dashboard.nav.buildings'), icon: OfficeBuilding, path: '/library/buildings', matches: ['libBuildings'], color: '#0d9488' },
-    { key: 'weather', label: t('dashboard.nav.weather'), icon: Sunny, path: '/library/weather', matches: ['libWeather'], color: '#f59e0b' },
-    { key: 'equipment', label: t('dashboard.nav.equipment'), icon: Setting, path: '/library/equipment', matches: ['libEquipment'], color: '#7c3aed' },
-    { key: 'account', label: t('dashboard.nav.account'), icon: User, path: '/account', matches: ['account'], color: '#dc2626' },
+    { key: 'home', label: t('dashboard.nav.home'), icon: HomeFilled, path: '/', matches: ['home'], color: SIDEBAR_NAV_COLOR },
+    { key: 'projects', label: t('dashboard.nav.projects'), icon: FolderOpened, path: '/projects', matches: ['projectsList'], color: SIDEBAR_NAV_COLOR },
+    { key: 'buildings', label: t('dashboard.nav.buildings'), icon: OfficeBuilding, path: '/library/buildings', matches: ['libBuildings'], color: SIDEBAR_NAV_COLOR },
+    { key: 'weather', label: t('dashboard.nav.weather'), icon: Sunny, path: '/library/weather', matches: ['libWeather'], color: SIDEBAR_NAV_COLOR },
+    { key: 'equipment', label: t('dashboard.nav.equipment'), icon: Setting, path: '/library/equipment', matches: ['libEquipment'], color: SIDEBAR_NAV_COLOR },
+    { key: 'account', label: t('dashboard.nav.account'), icon: User, path: '/account', matches: ['account'], color: SIDEBAR_NAV_COLOR },
   ]
   if (authStore.isAdmin) {
-    items.push({ key: 'admin', label: t('dashboard.nav.admin'), icon: Lock, path: '/admin/users', matches: ['adminUsers'], color: '#dc2626' })
+    items.push({ key: 'admin', label: t('dashboard.nav.admin'), icon: Lock, path: '/admin/users', matches: ['adminUsers'], color: SIDEBAR_NAV_COLOR })
   }
   return items
 })
@@ -133,7 +135,7 @@ const isActive = (item: NavItem) => item.matches.includes(route.name as string)
   width: 36px; height: 36px;
   border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, #06b6d4, #0284c7);
+  background: var(--brand-primary-gradient);
   color: white;
   flex-shrink: 0;
 }
@@ -196,7 +198,7 @@ const isActive = (item: NavItem) => item.matches.includes(route.name as string)
 }
 .hl-avatar {
   width: 32px; height: 32px; border-radius: 50%;
-  background: linear-gradient(135deg, #06b6d4, #0284c7);
+  background: var(--brand-primary-gradient);
   color: white; font-weight: 600; font-size: 14px;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;

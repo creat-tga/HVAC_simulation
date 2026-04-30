@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue'
+import { onMounted, onUnmounted, ref, shallowRef, triggerRef, computed, nextTick, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getBuilding, updateBuilding } from '@/api/buildings'
@@ -417,6 +417,7 @@ const isDirty = computed(() => editVersion.value !== savedVersion.value)
 function markDirty() {
   if (_initializing.value) return
   editVersion.value++
+  scheduleSyncToSelected()
 }
 
 function handleZoneFormInput() {
@@ -426,6 +427,28 @@ function handleZoneFormInput() {
 function handleZoneFormChange() {
   markDirty()
   queueConflictCheck()
+}
+
+// markDirty 会被各种表单/调度修改调用；这里用一帧合并同步到已选分区。
+let syncFrameId: number | null = null
+function scheduleSyncToSelected() {
+  if (syncFrameId !== null) return
+  const source = activeZone.value
+  const set = selectedSet.value
+  if (!source || !zoneSelectMode.value || set.size <= 1 || !set.has(source)) return
+  syncFrameId = requestAnimationFrame(() => {
+    syncFrameId = null
+    syncActiveZoneToSelected()
+  })
+}
+function syncActiveZoneToSelected() {
+  const source = activeZone.value
+  if (!source) return
+  const set = selectedSet.value
+  if (!zoneSelectMode.value || set.size <= 1 || !set.has(source)) return
+  set.forEach(target => {
+    if (target !== source) syncZoneDetailSettings(source, target)
+  })
 }
 
 const zoneItems = computed(() => editZones.value.map((zone, index) => ({ zone, index })))
@@ -483,49 +506,59 @@ const MAX_ZONES = 999 // 最大分区数
 const activeZone = computed(() => editZones.value[selectedZoneIdx.value] ?? null)
 
 // ----- Table selection for batch operations -----
-const selectedRows = ref<BuildingZone[]>([])
+// 使用 Set 直接存储被选中的 zone 引用，避免数组 ↔ Set 反复转换带来的 O(n) 开销。
+// 配合 shallowRef + triggerRef，在 add/delete/clear 后手动通知 Vue 更新依赖。
+const selectedSet = shallowRef<Set<BuildingZone>>(new Set())
+const selectedCount = computed(() => selectedSet.value.size)
 const zoneSelectMode = ref(false)
 const batchAddVisible = ref(false)
 const batchAddCount = ref(3)
 const batchAddName = ref('')
-let syncingSelectedZones = false
 
 function cloneValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value))
 }
 
-const selectedZoneSet = computed(() => new Set(selectedRows.value))
-
 function isZoneSelected(zone: BuildingZone): boolean {
-  return selectedZoneSet.value.has(zone)
+  return selectedSet.value.has(zone)
 }
 
-function toggleZoneSelect(zone: BuildingZone, checked: any) {
+function toggleZoneSelect(zone: BuildingZone, checked: any, _index?: number) {
+  // 勾选仅更新选中集，不切换 activeZone，以避免详情面板重渲染。
   if (checked) {
-    if (!isZoneSelected(zone)) selectedRows.value.push(zone)
-    handleRowClick(zone)
+    if (!selectedSet.value.has(zone)) {
+      selectedSet.value.add(zone)
+      triggerRef(selectedSet)
+    }
   } else {
-    selectedRows.value = selectedRows.value.filter(z => z !== zone)
+    if (selectedSet.value.delete(zone)) triggerRef(selectedSet)
   }
 }
 
 function setZoneSelectMode(enabled: any) {
   zoneSelectMode.value = Boolean(enabled)
-  if (!zoneSelectMode.value) selectedRows.value = []
+  if (!zoneSelectMode.value && selectedSet.value.size > 0) {
+    selectedSet.value.clear()
+    triggerRef(selectedSet)
+  }
 }
 
-function handleZoneCardClick(zone: BuildingZone) {
+function handleZoneCardClick(zone: BuildingZone, index?: number) {
   if (zoneSelectMode.value) {
-    toggleZoneSelect(zone, !isZoneSelected(zone))
+    // 选择模式下，点击卡片主体也只切换勾选状态，不进入详情。
+    toggleZoneSelect(zone, !selectedSet.value.has(zone), index)
     return
   }
-  handleRowClick(zone)
+  if (typeof index === 'number' && index >= 0) {
+    selectedZoneIdx.value = index
+    activePresetKey.value = ''
+  } else {
+    handleRowClick(zone)
+  }
 }
 
-const isBatchDetailEditing = computed(() => {
-  const zone = activeZone.value
-  return zoneSelectMode.value && !!zone && selectedRows.value.length > 1 && selectedZoneSet.value.has(zone)
-})
+// 详情面板始终只绑定当前 activeZone；多选时通过 markDirty 自动同步到其他已选分区。
+const isBatchDetailEditing = computed(() => false)
 
 function syncZoneDetailSettings(source: BuildingZone, target: BuildingZone) {
   target.name = source.name
@@ -548,8 +581,7 @@ function syncZoneDetailSettings(source: BuildingZone, target: BuildingZone) {
 
 function detailEditTargets(): BuildingZone[] {
   const zone = activeZone.value
-  if (!zone) return []
-  return isBatchDetailEditing.value ? selectedRows.value : [zone]
+  return zone ? [zone] : []
 }
 
 function getSharedValue<T>(getter: (zone: BuildingZone) => T): T | undefined {
@@ -597,36 +629,27 @@ function setPeopleHeatGainValue(value: number | undefined) {
   markDirty()
 }
 
-watch(activeZone, (source, previousSource) => {
-  if (!source || !isBatchDetailEditing.value || syncingSelectedZones) return
-  if (source !== previousSource) return
-  syncingSelectedZones = true
-  try {
-    selectedRows.value
-      .filter(target => target !== source)
-      .forEach(target => syncZoneDetailSettings(source, target))
-  } finally {
-    syncingSelectedZones = false
-  }
-}, { deep: true })
+watch(activeZone, () => {
+  // 不再使用 deep watch 自动同步多个 zone；改为表单事件触发（见 scheduleSyncToSelected）。
+})
 
 const allPagedSelected = computed(() => {
-  const selectedSet = selectedZoneSet.value
-  return editZones.value.length > 0 && editZones.value.every(zone => selectedSet.has(zone))
+  const set = selectedSet.value
+  return editZones.value.length > 0 && editZones.value.every(zone => set.has(zone))
 })
 
 const someSelected = computed(() =>
-  selectedRows.value.length > 0 && !allPagedSelected.value
+  selectedSet.value.size > 0 && !allPagedSelected.value
 )
 
 function toggleAllPaged(checked: any) {
   if (checked) {
-    const set = new Set(selectedRows.value)
+    const set = selectedSet.value
     editZones.value.forEach(zone => set.add(zone))
-    selectedRows.value = Array.from(set)
   } else {
-    selectedRows.value = []
+    selectedSet.value.clear()
   }
+  triggerRef(selectedSet)
 }
 
 function handleRowClick(row: BuildingZone) {
@@ -681,30 +704,32 @@ function removeZone(zone: BuildingZone) {
 }
 
 async function batchDelete() {
-  if (selectedRows.value.length === 0) return
-  if (selectedRows.value.length >= editZones.value.length) {
+  const size = selectedSet.value.size
+  if (size === 0) return
+  if (size >= editZones.value.length) {
     ElMessage.warning(t('building.zone.lastZoneHint'))
     return
   }
   await ElMessageBox.confirm(
-    t('building.zone.batchDeleteConfirm', { count: selectedRows.value.length }),
+    t('building.zone.batchDeleteConfirm', { count: size }),
     t('common.warning'), { type: 'warning' }
   )
-  const toRemove = new Set(selectedRows.value)
+  const toRemove = selectedSet.value
   editZones.value = editZones.value.filter(z => !toRemove.has(z))
   selectedZoneIdx.value = Math.min(selectedZoneIdx.value, editZones.value.length - 1)
-  selectedRows.value = []
+  selectedSet.value = new Set()
+  triggerRef(selectedSet)
   markDirty()
 }
 
 function batchCopy() {
-  if (selectedRows.value.length === 0) return
+  if (selectedSet.value.size === 0) return
   const remaining = MAX_ZONES - editZones.value.length
   if (remaining <= 0) {
     ElMessage.warning(t('building.zone.maxZonesHint', { max: MAX_ZONES }))
     return
   }
-  const toCopy = selectedRows.value.slice(0, remaining)
+  const toCopy = Array.from(selectedSet.value).slice(0, remaining)
   const copies = toCopy.map(z => {
     const copy: BuildingZone = JSON.parse(JSON.stringify(z))
     return copy
@@ -950,7 +975,7 @@ onUnmounted(() => {
           <button class="building-mb-icon-btn" :aria-label="t('building.zone.add')" @click="addZone">
             <el-icon :size="16"><Plus /></el-icon>
           </button>
-          <button v-if="zoneSelectMode" class="building-mb-icon-btn building-mb-icon-btn--danger" :disabled="selectedRows.length === 0"
+          <button v-if="zoneSelectMode" class="building-mb-icon-btn building-mb-icon-btn--danger" :disabled="selectedCount === 0"
             :aria-label="t('building.zone.batchDelete')" @click="batchDelete">
             <el-icon :size="16"><Delete /></el-icon>
           </button>
@@ -995,10 +1020,10 @@ onUnmounted(() => {
             <el-button :icon="FolderAdd" size="small" @click="batchAddVisible = true">
               <span v-if="!isMobile">{{ t('building.zone.batchAdd') }}</span>
             </el-button>
-            <el-button v-if="zoneSelectMode" :icon="CopyDocument" size="small" :disabled="selectedRows.length === 0" @click="batchCopy">
+            <el-button v-if="zoneSelectMode" :icon="CopyDocument" size="small" :disabled="selectedCount === 0" @click="batchCopy">
               <span v-if="!isMobile">{{ t('building.zone.batchCopy') }}</span>
             </el-button>
-            <el-button v-if="zoneSelectMode" type="danger" :icon="Delete" size="small" plain :disabled="selectedRows.length === 0"
+            <el-button v-if="zoneSelectMode" type="danger" :icon="Delete" size="small" plain :disabled="selectedCount === 0"
               @click="batchDelete">
               <span v-if="!isMobile">{{ t('building.zone.batchDelete') }}</span>
             </el-button>
@@ -1014,8 +1039,8 @@ onUnmounted(() => {
             @change="(v: any) => toggleAllPaged(v)">
             {{ t('common.selectAll') }}
           </el-checkbox>
-          <span v-if="zoneSelectMode && selectedRows.length > 0" class="zg-sel-count">
-            {{ t('building.zone.selectedCount', { count: selectedRows.length }) }}
+          <span v-if="zoneSelectMode && selectedCount > 0" class="zg-sel-count">
+            {{ t('building.zone.selectedCount', { count: selectedCount }) }}
           </span>
         </div>
         <div ref="zoneListRef" class="zone-grid-scroll" @scroll="handleZoneListScroll">
@@ -1023,10 +1048,10 @@ onUnmounted(() => {
           <div class="zone-grid-list">
             <div v-for="item in visibleZoneItems" :key="item.index" class="zone-mini-card"
               :class="{ active: item.index === selectedZoneIdx, selected: zoneSelectMode && isZoneSelected(item.zone) }"
-              @click="handleZoneCardClick(item.zone)">
+              @click="handleZoneCardClick(item.zone, item.index)">
               <div class="zmc-header">
                 <el-checkbox v-if="zoneSelectMode" :model-value="isZoneSelected(item.zone)" @click.stop
-                  @change="(v: any) => toggleZoneSelect(item.zone, v)" />
+                  @change="(v: any) => toggleZoneSelect(item.zone, v, item.index)" />
                 <span class="zmc-num">#{{ item.index + 1 }}</span>
                 <span class="zmc-area">{{ (item.zone.area || 0).toFixed(1) }} m²</span>
                 <span v-if="item.zone.name && (!isMobile || zoneSelectMode)" class="zmc-nickname" :title="item.zone.name">{{ item.zone.name }}</span>
@@ -1065,25 +1090,26 @@ onUnmounted(() => {
       <template #header>
         <div class="zone-detail-header">
           <div class="zone-detail-title">
-            <span v-if="isBatchDetailEditing">{{ t('building.zone.detailEditBatch', { count: selectedRows.length }) }}</span>
-            <span v-else>#{{ selectedZoneIdx + 1 }}<template v-if="activeZone.name"> · {{ activeZone.name }}</template> — {{
+            <span>#{{ selectedZoneIdx + 1 }}<template v-if="activeZone.name"> · {{ activeZone.name }}</template> — {{
               t('building.zone.detailEdit') }}</span>
           </div>
-          <el-dropdown trigger="click" @command="applyPreset">
-            <el-button size="small">
-              {{ activePresetKey ? t(`building.zone.presets.${activePresetKey}`) : t('building.applyTemplate') }}
-              <el-icon class="el-icon--right">
-                <ArrowDown />
-              </el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item v-for="pk in PRESET_KEYS" :key="pk" :command="pk">
-                  {{ t(`building.zone.presets.${pk}`) }}
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+          <div class="zone-detail-actions">
+            <el-dropdown trigger="click" @command="applyPreset">
+              <el-button size="small">
+                {{ activePresetKey ? t(`building.zone.presets.${activePresetKey}`) : t('building.applyTemplate') }}
+                <el-icon class="el-icon--right">
+                  <ArrowDown />
+                </el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item v-for="pk in PRESET_KEYS" :key="pk" :command="pk">
+                    {{ t(`building.zone.presets.${pk}`) }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
         </div>
       </template>
       <el-form label-position="top" class="zone-form" @input.capture="handleZoneFormInput" @change.capture="handleZoneFormChange">
@@ -1620,6 +1646,13 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
+}
+
+.zone-detail-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .zone-nickname-item {

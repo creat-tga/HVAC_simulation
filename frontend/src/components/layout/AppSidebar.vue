@@ -264,8 +264,8 @@ function switchBuilding(bid: string) {
 }
 
 .nav-item:hover {
-  background: rgba(6, 182, 212, 0.06);
-  color: #0e7490;
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary);
 }
 
 .nav-item:active {
@@ -273,14 +273,14 @@ function switchBuilding(bid: string) {
 }
 
 .nav-item.is-active {
-  background: linear-gradient(135deg, rgba(6, 182, 212, 0.13), rgba(2, 132, 199, 0.07));
-  color: #0891b2;
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary);
   font-weight: 600;
-  box-shadow: inset 3px 0 0 #0891b2;
+  box-shadow: inset 3px 0 0 var(--brand-primary);
 }
 
 .nav-item.is-active .el-icon {
-  color: #0891b2;
+  color: var(--brand-primary);
 }
 
 /* ── Workflow Steps ── */
@@ -298,7 +298,7 @@ function switchBuilding(bid: string) {
 }
 
 .workflow-step:hover .step-content {
-  background: rgba(6, 182, 212, 0.05);
+  background: var(--brand-primary-soft);
 }
 
 .workflow-step:active {
@@ -324,11 +324,11 @@ function switchBuilding(bid: string) {
 
 .workflow-step.is-completed .step-line-top,
 .workflow-step.is-completed .step-line-bottom {
-  background: #06b6d4;
+  background: var(--brand-primary);
 }
 
 .workflow-step.is-active .step-line-top {
-  background: #06b6d4;
+  background: var(--brand-primary);
 }
 
 .step-circle {
@@ -348,15 +348,15 @@ function switchBuilding(bid: string) {
 }
 
 .workflow-step.is-active .step-circle {
-  background: rgba(6, 182, 212, 0.15);
-  border-color: #0891b2;
-  color: #0891b2;
-  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+  background: var(--brand-primary-soft);
+  border-color: var(--brand-primary);
+  color: var(--brand-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-primary) 12%, transparent);
 }
 
 .workflow-step.is-completed .step-circle {
-  background: #06b6d4;
-  border-color: #06b6d4;
+  background: var(--brand-primary);
+  border-color: var(--brand-primary);
   color: white;
 }
 
@@ -370,7 +370,7 @@ function switchBuilding(bid: string) {
 }
 
 .workflow-step.is-active .step-content {
-  background: linear-gradient(135deg, rgba(6, 182, 212, 0.1), rgba(2, 132, 199, 0.05));
+  background: var(--brand-primary-soft);
 }
 
 .step-label {
@@ -382,12 +382,12 @@ function switchBuilding(bid: string) {
 }
 
 .workflow-step.is-active .step-label {
-  color: #0891b2;
+  color: var(--brand-primary);
   font-weight: 600;
 }
 
 .workflow-step.is-completed .step-label {
-  color: #0e7490;
+  color: var(--brand-primary);
 }
 
 .workflow-step.is-future .step-label {
@@ -405,7 +405,7 @@ function switchBuilding(bid: string) {
 }
 
 .workflow-step.is-active .step-desc {
-  color: #0891b2;
+  color: var(--brand-primary);
   opacity: 0.7;
 }
 
@@ -428,9 +428,9 @@ function switchBuilding(bid: string) {
 }
 
 .building-switcher-trigger:hover {
-  border-color: rgba(6, 182, 212, 0.45);
-  background: linear-gradient(135deg, rgba(6, 182, 212, 0.05), rgba(6, 182, 212, 0.02));
-  box-shadow: 0 1px 4px rgba(6, 182, 212, 0.08);
+  border-color: color-mix(in srgb, var(--brand-primary) 36%, transparent);
+  background: var(--brand-primary-soft);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--brand-primary) 10%, transparent);
 }
 
 .building-switcher-trigger .el-icon {
@@ -439,7 +439,7 @@ function switchBuilding(bid: string) {
 }
 
 .building-switcher-trigger:hover .el-icon {
-  color: #0891b2;
+  color: var(--brand-primary);
 }
 
 .building-switcher-trigger.static {
@@ -462,9 +462,9 @@ function switchBuilding(bid: string) {
 }
 
 .building-switcher :deep(.el-dropdown-menu__item.is-current) {
-  color: #0891b2;
+  color: var(--brand-primary);
   font-weight: 600;
-  background: rgba(6, 182, 212, 0.06);
+  background: var(--brand-primary-soft);
 }
 
 @media (max-width: 768px) {

@@ -24,6 +24,7 @@ const { t } = useI18n()
 const store = useProjectStore()
 
 const projectId = computed(() => route.params.projectId as string)
+const SIDEBAR_NAV_COLOR = 'var(--brand-primary)'
 
 interface NavItem {
   key: string
@@ -45,7 +46,7 @@ const navItems = computed<NavItem[]>(() => [
     path: `/projects/${projectId.value}/building`,
     matches: ['workspaceBuilding', 'building', 'loadCalc'],
     step: 1,
-    color: 'var(--brand-accent)',
+    color: SIDEBAR_NAV_COLOR,
   },
   {
     key: 'system',
@@ -55,7 +56,7 @@ const navItems = computed<NavItem[]>(() => [
     path: `/projects/${projectId.value}/system-schemes`,
     matches: ['workspaceSystem', 'systemSchemeList', 'systemSchemeDetail', 'systemSelect', 'simulation'],
     step: 2,
-    color: '#7c3aed',
+    color: SIDEBAR_NAV_COLOR,
   },
   {
     key: 'visualization',
@@ -65,7 +66,7 @@ const navItems = computed<NavItem[]>(() => [
     path: `/projects/${projectId.value}/visualization`,
     matches: ['workspaceViz', 'workspaceVizLoads', 'workspaceVizEnergy', 'report'],
     step: 3,
-    color: '#0d9488',
+    color: SIDEBAR_NAV_COLOR,
   },
 ])
 
@@ -264,20 +265,20 @@ function toggleSidebar() {
   align-self: flex-start;
 }
 .ws-back:hover {
-  color: var(--brand-accent);
-  background: rgba(6, 182, 212, 0.08);
+  color: var(--brand-primary);
+  background: var(--brand-primary-soft);
 }
 
 .ws-proj-card {
   padding: 14px 14px 12px;
-  background: linear-gradient(135deg, rgba(8, 145, 178, 0.08), rgba(2, 132, 199, 0.04));
-  border: 1px solid rgba(8, 145, 178, 0.18);
+  background: var(--brand-primary-soft);
+  border: 1px solid color-mix(in srgb, var(--brand-primary) 20%, transparent);
   border-radius: var(--radius-lg);
 }
 .ws-proj-tag {
   font-size: 10px;
   letter-spacing: 0.1em;
-  color: var(--brand-accent);
+  color: var(--brand-primary);
   text-transform: uppercase;
   font-weight: var(--font-weight-semibold);
   margin-bottom: 4px;

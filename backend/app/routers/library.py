@@ -21,6 +21,7 @@ from app.schemas.library import (
 )
 from app.schemas.building import BuildingResponse
 from app.services import library_service as lib
+from app.services.building_service import BuildingLimitError
 
 # ---------- Weather ----------
 weather_router = APIRouter(prefix="/weather", tags=["气象数据"])
@@ -177,6 +178,8 @@ async def clone_to_project(
 ):
     try:
         bld = await lib.clone_template_to_project(db, tpl_id, data.project_id, data.name)
+    except BuildingLimitError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return bld

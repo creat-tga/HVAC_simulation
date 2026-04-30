@@ -113,7 +113,7 @@ function navigate(path?: string) {
 }
 
 .crumb.is-link:hover {
-  color: #0891b2;
+  color: var(--brand-primary);
 }
 
 .crumb.is-current {
