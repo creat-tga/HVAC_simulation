@@ -10,6 +10,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { CascaderValue, FormRules, FormInstance } from 'element-plus'
 import { regionData } from '@/data/regions'
 import { createNameValidator } from '@/utils'
+import { useEdgeBounce } from '@/composables/useEdgeBounce'
 
 const NAME_MAX = 30
 const DESC_MAX = 1500
@@ -39,6 +40,11 @@ const router = useRouter()
 const store = useProjectStore()
 const { t } = useI18n()
 const validateName = createNameValidator(t)
+const scrollAreaRef = ref<HTMLElement | null>(null)
+
+useEdgeBounce(scrollAreaRef, {
+  maxOffset: 48,
+})
 
 // Filter state
 const searchKeyword = ref('')
@@ -350,7 +356,7 @@ function openProject(id: string) {
     </div>
     </div>
 
-    <div class="scroll-area">
+    <div ref="scrollAreaRef" class="scroll-area">
     <el-row :gutter="20" v-loading="store.loading">
       <el-col
         v-for="project in filteredProjects"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, shallowRef, triggerRef, computed, nextTick, watch } from 'vue'
+import { onMounted, onUnmounted, ref, reactive, shallowRef, triggerRef, computed, nextTick, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getBuilding, updateBuilding } from '@/api/buildings'
@@ -116,25 +116,23 @@ function deepCopyParam(src: ParamConfig): ParamConfig {
 function applyPreset(presetKey: string) {
   const preset = ZONE_PRESETS[presetKey]
   if (!preset) return
-  const z = activeZone.value
-  if (!z) return
-  z.name = t(`building.zone.presets.${presetKey}`)
-  // Apply envelope
-  z.floor_height = preset.floor_height
-  z.wall_u_value = preset.wall_u_value
-  z.window_u_value = preset.window_u_value
-  z.window_wall_ratio = preset.window_wall_ratio
-  z.roof_u_value = preset.roof_u_value
-  // Apply full param configs (deep copy to avoid shared references)
-  z.people_density = deepCopyParam(preset.people_density)
-  z.people_heat_gain = preset.people_heat_gain ?? 134
-  z.lighting_density = deepCopyParam(preset.lighting_density)
-  z.equipment_density = deepCopyParam(preset.equipment_density)
-  z.fresh_air_volume = deepCopyParam(preset.fresh_air_volume)
-  // Apply setpoints if present in preset
-  if (preset.temperature) z.temperature = deepCopyParam(preset.temperature)
-  if (preset.relative_humidity) z.relative_humidity = deepCopyParam(preset.relative_humidity)
-  // Track selected preset
+  const targets = detailEditTargets()
+  if (targets.length === 0) return
+  for (const z of targets) {
+    z.name = t(`building.zone.presets.${presetKey}`)
+    z.floor_height = preset.floor_height
+    z.wall_u_value = preset.wall_u_value
+    z.window_u_value = preset.window_u_value
+    z.window_wall_ratio = preset.window_wall_ratio
+    z.roof_u_value = preset.roof_u_value
+    z.people_density = deepCopyParam(preset.people_density)
+    z.people_heat_gain = preset.people_heat_gain ?? 134
+    z.lighting_density = deepCopyParam(preset.lighting_density)
+    z.equipment_density = deepCopyParam(preset.equipment_density)
+    z.fresh_air_volume = deepCopyParam(preset.fresh_air_volume)
+    if (preset.temperature) z.temperature = deepCopyParam(preset.temperature)
+    if (preset.relative_humidity) z.relative_humidity = deepCopyParam(preset.relative_humidity)
+  }
   activePresetKey.value = presetKey
   markDirty()
   queueConflictCheck()
@@ -417,7 +415,6 @@ const isDirty = computed(() => editVersion.value !== savedVersion.value)
 function markDirty() {
   if (_initializing.value) return
   editVersion.value++
-  scheduleSyncToSelected()
 }
 
 function handleZoneFormInput() {
@@ -429,27 +426,8 @@ function handleZoneFormChange() {
   queueConflictCheck()
 }
 
-// markDirty 会被各种表单/调度修改调用；这里用一帧合并同步到已选分区。
-let syncFrameId: number | null = null
-function scheduleSyncToSelected() {
-  if (syncFrameId !== null) return
-  const source = activeZone.value
-  const set = selectedSet.value
-  if (!source || !zoneSelectMode.value || set.size <= 1 || !set.has(source)) return
-  syncFrameId = requestAnimationFrame(() => {
-    syncFrameId = null
-    syncActiveZoneToSelected()
-  })
-}
-function syncActiveZoneToSelected() {
-  const source = activeZone.value
-  if (!source) return
-  const set = selectedSet.value
-  if (!zoneSelectMode.value || set.size <= 1 || !set.has(source)) return
-  set.forEach(target => {
-    if (target !== source) syncZoneDetailSettings(source, target)
-  })
-}
+// 多选同步不再依赖“复制 active”套路：常规字段由 setter 直接写入多 target，
+// 日程类模块由专门的批量编辑器一次性 apply，因此原先的 scheduleSyncToSelected 已移除。
 
 const zoneItems = computed(() => editZones.value.map((zone, index) => ({ zone, index })))
 const zoneListRef = ref<HTMLElement | null>(null)
@@ -524,22 +502,59 @@ function isZoneSelected(zone: BuildingZone): boolean {
 }
 
 function toggleZoneSelect(zone: BuildingZone, checked: any, _index?: number) {
-  // 勾选仅更新选中集，不切换 activeZone，以避免详情面板重渲染。
   if (checked) {
     if (!selectedSet.value.has(zone)) {
       selectedSet.value.add(zone)
       triggerRef(selectedSet)
+      // 没有 activeZone（刚进入选择模式或已全部取消）时，把当前勾选的作为详情面板载体
+      if (!activeZone.value) {
+        const idx = editZones.value.indexOf(zone)
+        if (idx >= 0) {
+          selectedZoneIdx.value = idx
+          activePresetKey.value = ''
+        }
+      }
     }
   } else {
-    if (selectedSet.value.delete(zone)) triggerRef(selectedSet)
+    if (selectedSet.value.delete(zone)) {
+      triggerRef(selectedSet)
+      // 取消的是当前 activeZone：切到剩余已选中任意一个；若空则清空详情
+      if (activeZone.value === zone) {
+        const next = selectedSet.value.values().next().value as BuildingZone | undefined
+        if (next) {
+          const idx = editZones.value.indexOf(next)
+          selectedZoneIdx.value = idx >= 0 ? idx : -1
+        } else {
+          selectedZoneIdx.value = -1
+        }
+        activePresetKey.value = ''
+      }
+    }
   }
 }
 
 function setZoneSelectMode(enabled: any) {
-  zoneSelectMode.value = Boolean(enabled)
-  if (!zoneSelectMode.value && selectedSet.value.size > 0) {
+  const next = Boolean(enabled)
+  zoneSelectMode.value = next
+  if (selectedSet.value.size > 0) {
     selectedSet.value.clear()
     triggerRef(selectedSet)
+  }
+  if (next) {
+    // 进入选择模式：清空当前单选，详情面板显示提示，等待用户勾选
+    selectedZoneIdx.value = -1
+    activePresetKey.value = ''
+  } else if (editZones.value.length > 0) {
+    // 退出选择模式：默认回到第一个分区，但让 重型日程块延迟一帧再挂载，
+    // 以便列表面能先响应“退出选择模式”的视觉反馈。
+    scheduleSectionsReady.value = false
+    selectedZoneIdx.value = 0
+    activePresetKey.value = ''
+    requestAnimationFrame(() => {
+      // 在下一帧再挂载重型日程区，避免主线程被多个 ScheduleEditor 同时 mount 阻塞。
+      resetParamBlockVisibility()
+      scheduleSectionsReady.value = true
+    })
   }
 }
 
@@ -557,32 +572,120 @@ function handleZoneCardClick(zone: BuildingZone, index?: number) {
   }
 }
 
-// 详情面板始终只绑定当前 activeZone；多选时通过 markDirty 自动同步到其他已选分区。
-const isBatchDetailEditing = computed(() => false)
-
-function syncZoneDetailSettings(source: BuildingZone, target: BuildingZone) {
-  target.name = source.name
-  target.area = source.area
-  target.floor_height = source.floor_height
-  target.zone_position = source.zone_position
-  target.wall_config = cloneValue(source.wall_config)
-  target.wall_u_value = source.wall_u_value
-  target.window_u_value = source.window_u_value
-  target.window_wall_ratio = source.window_wall_ratio
-  target.roof_u_value = source.roof_u_value
-  target.people_density = cloneValue(source.people_density)
-  target.people_heat_gain = source.people_heat_gain
-  target.lighting_density = cloneValue(source.lighting_density)
-  target.equipment_density = cloneValue(source.equipment_density)
-  target.fresh_air_volume = cloneValue(source.fresh_air_volume)
-  target.temperature = cloneValue(source.temperature)
-  target.relative_humidity = cloneValue(source.relative_humidity)
-}
+// 选择模式下任意勾选数量（≥1）都使用模块化编辑器，避免一次性挂载大量 ScheduleEditor。
+const isBatchDetailEditing = computed(() => zoneSelectMode.value && selectedSet.value.size >= 1)
 
 function detailEditTargets(): BuildingZone[] {
+  if (zoneSelectMode.value && selectedSet.value.size > 0) {
+    return Array.from(selectedSet.value)
+  }
   const zone = activeZone.value
   return zone ? [zone] : []
 }
+
+type WallDir = keyof WallConfig
+const WALL_DIRS: WallDir[] = ['south_exterior', 'north_exterior', 'east_exterior', 'west_exterior']
+
+function ensureWallConfig(zone: BuildingZone): WallConfig {
+  if (!zone.wall_config) {
+    zone.wall_config = { south_exterior: true, north_exterior: true, east_exterior: true, west_exterior: true }
+  }
+  return zone.wall_config
+}
+
+function getSharedWallExterior(dir: WallDir): boolean | undefined {
+  return getSharedValue(zone => ensureWallConfig(zone)[dir])
+}
+
+function setSharedWallExterior(dir: WallDir, value: boolean) {
+  detailEditTargets().forEach(zone => {
+    ensureWallConfig(zone)[dir] = value
+  })
+  markDirty()
+}
+
+function wallExteriorIndeterminate(dir: WallDir): boolean {
+  if (!isBatchDetailEditing.value) return false
+  return getSharedWallExterior(dir) === undefined
+}
+
+// ----- Batch (multi-zone) modular editor -----
+// 思路：多选编辑时不读取、不展示选中分区原有的日程参数；点击 “统一设置 XX” 后用一份默认模板进行编辑，
+// 点击 “应用到已选 N 个分区” 后才会一次性覆盖。避免多选时为所有已选分区同时渲染、读取 ScheduleEditor 造成卡顿。
+type BatchSection = 'people_density' | 'lighting_density' | 'equipment_density' | 'fresh_air_volume' | 'setpoint'
+const BATCH_SECTIONS: BatchSection[] = ['people_density', 'lighting_density', 'equipment_density', 'fresh_air_volume', 'setpoint']
+const BATCH_SECTION_LABELS: Record<BatchSection, string> = {
+  people_density: 'building.internalGains.peopleShort',
+  lighting_density: 'building.internalGains.lighting',
+  equipment_density: 'building.internalGains.equipment',
+  fresh_air_volume: 'building.internalGains.freshAir',
+  setpoint: 'building.setpoint.combined',
+}
+
+const batchEditingSection = ref<BatchSection | null>(null)
+const batchDraftParam = ref<ParamConfig | null>(null)
+const batchDraftHeatGain = ref<number>(134)
+const batchDraftZone = ref<BuildingZone | null>(null)
+
+function openBatchSectionEditor(section: BatchSection) {
+  batchEditingSection.value = section
+  if (section === 'setpoint') {
+    batchDraftParam.value = null
+    batchDraftZone.value = createDefaultZone()
+  } else {
+    batchDraftZone.value = null
+    const presetParam = (ZONE_PRESETS.office as any)[section] as ParamConfig | undefined
+    const fallbackVal = section === 'people_density' ? 0.1 : section === 'lighting_density' ? 10 : section === 'equipment_density' ? 15 : 30
+    const draft: ParamConfig = {
+      mode: 'scheduled',
+      fixed_value: presetParam?.fixed_value ?? fallbackVal,
+      schedules: [createOfficeRatiosSchedule(t('building.schedule.presetWeekday'))],
+    }
+    batchDraftParam.value = draft
+    if (section === 'people_density') {
+      batchDraftHeatGain.value = ZONE_PRESETS.office.people_heat_gain ?? 134
+    }
+  }
+}
+
+function cancelBatchSectionEditor() {
+  batchEditingSection.value = null
+  batchDraftParam.value = null
+  batchDraftZone.value = null
+}
+
+function applyBatchSectionEditor() {
+  const section = batchEditingSection.value
+  const targets = detailEditTargets()
+  if (!section || targets.length === 0) return
+  if (section === 'setpoint') {
+    const draft = batchDraftZone.value
+    if (!draft) return
+    targets.forEach(zone => {
+      zone.temperature = cloneValue(draft.temperature)
+      zone.relative_humidity = cloneValue(draft.relative_humidity)
+    })
+  } else {
+    const draft = batchDraftParam.value
+    if (!draft) return
+    targets.forEach(zone => {
+      ;(zone as any)[section] = cloneValue(draft)
+      if (section === 'people_density') {
+        zone.people_heat_gain = batchDraftHeatGain.value
+      }
+    })
+  }
+  ElMessage.success(t('building.zone.batchApplySuccess', { count: targets.length }))
+  markDirty()
+  queueConflictCheck()
+  cancelBatchSectionEditor()
+}
+
+// 退出批量模式或多选变为单选，结束未提交的模块编辑
+watch(isBatchDetailEditing, (v) => { if (!v) cancelBatchSectionEditor() })
+
+function hasScheduleMismatch(_key: string): boolean { return false }
+function hasSetpointScheduleMismatch(): boolean { return false }
 
 function getSharedValue<T>(getter: (zone: BuildingZone) => T): T | undefined {
   const targets = detailEditTargets()
@@ -630,8 +733,66 @@ function setPeopleHeatGainValue(value: number | undefined) {
 }
 
 watch(activeZone, () => {
-  // 不再使用 deep watch 自动同步多个 zone；改为表单事件触发（见 scheduleSyncToSelected）。
+  // 切换 activeZone ：参数块结构不变，仅需 ScheduleEditor 响应式更新参数即可，不必重置可见性以避免闪烁。
 })
+
+// 退出选择模式时延迟一帧再挂载重型日程区；首屏加载保持同步（初值 true）避免闪烁。
+const scheduleSectionsReady = ref(true)
+
+// ----- Detail 面板参数块懒挂载（类似虚拟列表的思路） -----
+// 4 个内扰块 + 1 个温湿度块，每个 ScheduleEditor 挂载成本很高。
+// 使用 IntersectionObserver：只有块进入视口（含 200px 预加载区）才 mount，未可见的只占 placeholder 高度。
+// 进一步：可见后“头部”先 mount，“日程编辑器”在下一帧 mount，把块内的重型 mount 拆为两段。
+const PARAM_BLOCK_KEYS = ['people_density', 'lighting_density', 'equipment_density', 'fresh_air_volume', 'setpoint'] as const
+const paramBlockVisible = reactive<Record<string, boolean>>({})
+const paramSchedulesReady = reactive<Record<string, boolean>>({})
+for (const k of PARAM_BLOCK_KEYS) { paramBlockVisible[k] = false; paramSchedulesReady[k] = false }
+let paramBlockObserver: IntersectionObserver | null = null
+const paramBlockEls = new Map<string, HTMLElement>()
+
+function markBlockVisible(key: string) {
+  if (paramBlockVisible[key]) return
+  paramBlockVisible[key] = true
+  // 下一帧再 mount 重型的 ScheduleEditor，给浏览器一个机会先 paint header。
+  requestAnimationFrame(() => { paramSchedulesReady[key] = true })
+}
+
+function ensureParamBlockObserver() {
+  if (paramBlockObserver) return paramBlockObserver
+  paramBlockObserver = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      const key = (entry.target as HTMLElement).dataset.blockKey
+      if (key && entry.isIntersecting) {
+        markBlockVisible(key)
+        paramBlockObserver?.unobserve(entry.target)
+      }
+    })
+  }, { rootMargin: '200px 0px 200px 0px' })
+  return paramBlockObserver
+}
+
+function bindParamBlock(el: Element | null, key: string) {
+  if (!el) {
+    const prev = paramBlockEls.get(key)
+    if (prev && paramBlockObserver) paramBlockObserver.unobserve(prev)
+    paramBlockEls.delete(key)
+    return
+  }
+  const node = el as HTMLElement
+  node.dataset.blockKey = key
+  paramBlockEls.set(key, node)
+  if (paramBlockVisible[key]) return
+  ensureParamBlockObserver().observe(node)
+}
+
+function resetParamBlockVisibility() {
+  for (const k of PARAM_BLOCK_KEYS) { paramBlockVisible[k] = false; paramSchedulesReady[k] = false }
+  // DOM 不会重新调用 :ref，手动重新 observe 已存元素，让 IntersectionObserver 下一帧重新检查可见性。
+  if (paramBlockEls.size > 0) {
+    const obs = ensureParamBlockObserver()
+    paramBlockEls.forEach(node => obs.observe(node))
+  }
+}
 
 const allPagedSelected = computed(() => {
   const set = selectedSet.value
@@ -646,9 +807,14 @@ function toggleAllPaged(checked: any) {
   if (checked) {
     const set = selectedSet.value
     editZones.value.forEach(zone => set.add(zone))
+    if (editZones.value.length > 0) {
+      selectedZoneIdx.value = 0
+    }
   } else {
     selectedSet.value.clear()
+    selectedZoneIdx.value = -1
   }
+  activePresetKey.value = ''
   triggerRef(selectedSet)
 }
 
@@ -954,6 +1120,9 @@ onUnmounted(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   zoneListResizeObserver?.disconnect()
   zoneListResizeObserver = null
+  paramBlockObserver?.disconnect()
+  paramBlockObserver = null
+  paramBlockEls.clear()
 })
 
 </script>
@@ -1085,12 +1254,18 @@ onUnmounted(() => {
       </template>
     </el-dialog>
 
+    <!-- Empty hint when in select mode but nothing selected -->
+    <el-card v-if="zoneSelectMode && selectedCount === 0" class="zone-card zone-card-empty" shadow="never">
+      <el-empty :description="t('building.zone.selectModeEmptyHint')" />
+    </el-card>
+
     <!-- Active zone detail -->
-    <el-card v-if="activeZone" class="zone-card" shadow="never">
+    <el-card v-if="activeZone" class="zone-card" shadow="never" :class="{ 'zone-card-batch': isBatchDetailEditing }">
       <template #header>
         <div class="zone-detail-header">
           <div class="zone-detail-title">
-            <span>#{{ selectedZoneIdx + 1 }}<template v-if="activeZone.name"> · {{ activeZone.name }}</template> — {{
+            <span v-if="isBatchDetailEditing">{{ t('building.zone.detailEditBatch', { count: selectedCount }) }}</span>
+            <span v-else>#{{ selectedZoneIdx + 1 }}<template v-if="activeZone.name"> · {{ activeZone.name }}</template> — {{
               t('building.zone.detailEdit') }}</span>
           </div>
           <div class="zone-detail-actions">
@@ -1112,7 +1287,7 @@ onUnmounted(() => {
           </div>
         </div>
       </template>
-      <el-form label-position="top" class="zone-form" @input.capture="handleZoneFormInput" @change.capture="handleZoneFormChange">
+      <el-form label-position="top" class="zone-form" :class="{ 'is-batch-editing': isBatchDetailEditing }" @input.capture="handleZoneFormInput" @change.capture="handleZoneFormChange">
         <div class="zone-basic-row">
           <div class="zone-basic-field">
             <el-form-item :label="t('building.zone.nickname')" class="zone-nickname-item zone-inline-item">
@@ -1154,20 +1329,21 @@ onUnmounted(() => {
           <el-col :xs="24" :sm="24">
             <el-form-item :label="t('building.envelope.wallType')" class="wall-config-item">
               <div class="wall-config-group">
-                <el-checkbox v-model="activeZone.wall_config.south_exterior">{{ t('building.envelope.wallDir.south')
-                  }}</el-checkbox>
-                <el-checkbox v-model="activeZone.wall_config.north_exterior">{{ t('building.envelope.wallDir.north')
-                  }}</el-checkbox>
-                <el-checkbox v-model="activeZone.wall_config.east_exterior">{{ t('building.envelope.wallDir.east')
-                  }}</el-checkbox>
-                <el-checkbox v-model="activeZone.wall_config.west_exterior">{{ t('building.envelope.wallDir.west')
-                  }}</el-checkbox>
+                <el-checkbox
+                  v-for="dir in WALL_DIRS"
+                  :key="dir"
+                  :model-value="getSharedWallExterior(dir) ?? false"
+                  :indeterminate="wallExteriorIndeterminate(dir)"
+                  @change="(v: any) => setSharedWallExterior(dir, Boolean(v))"
+                >{{ t(`building.envelope.wallDir.${dir.replace('_exterior','')}`) }}</el-checkbox>
               </div>
             </el-form-item>
           </el-col>
         </el-row>
 
-        <div v-for="pm in PARAM_METAS" :key="pm.key" class="ig-param">
+        <template v-if="!isBatchDetailEditing && scheduleSectionsReady">
+        <div v-for="pm in PARAM_METAS" :key="pm.key" class="ig-param" :ref="el => bindParamBlock(el as Element | null, pm.key)">
+          <template v-if="paramBlockVisible[pm.key]">
           <div class="ig-param-header">
             <span class="ig-param-label">{{ pm.key === 'people_density' ? t('building.internalGains.peopleShort') :
               t(pm.label) }}</span>
@@ -1197,6 +1373,9 @@ onUnmounted(() => {
             </el-button>
           </div>
           <div class="ig-schedules">
+            <div v-if="hasScheduleMismatch(pm.key)" class="mixed-schedule-warning">
+              {{ t('building.zone.scheduleMixedWarning') }}
+            </div>
             <ScheduleEditor v-for="(sch, sIdx) in getParam(activeZone, pm.key).schedules" :key="sIdx" :model-value="sch"
               :peak-value="getParam(activeZone, pm.key).fixed_value" :unit="paramUnit(pm.key)" :type="paramType(pm.key)"
               :param-label="t(pm.label)" :removable="getParam(activeZone, pm.key).schedules.length > 1"
@@ -1204,9 +1383,12 @@ onUnmounted(() => {
               @update:model-value="(v: DaySchedule) => updateScheduleAt(getParam(activeZone, pm.key), sIdx, v)"
               @remove="removeScheduleAt(getParam(activeZone, pm.key), sIdx)" />
           </div>
+          </template>
+          <div v-else class="detail-block-placeholder" />
         </div>
 
-        <div class="param-row setpoint-param-row">
+        <div class="param-row setpoint-param-row" :ref="el => bindParamBlock(el as Element | null, 'setpoint')">
+          <template v-if="paramBlockVisible.setpoint">
           <div class="param-header setpoint-param-header">
             <span class="param-label">{{ t('building.setpoint.combined') }}</span>
             <el-button type="primary" plain size="small" @click="addCombinedSetpointSchedule(activeZone)"
@@ -1217,6 +1399,10 @@ onUnmounted(() => {
           </div>
 
           <div class="param-schedules setpoint-schedules">
+            <div v-if="hasSetpointScheduleMismatch()" class="mixed-schedule-warning">
+              {{ t('building.zone.scheduleMixedWarning') }}
+            </div>
+            <template v-if="paramSchedulesReady.setpoint">
             <ScheduleEditor v-for="(sch, sIdx) in getCombinedSetpointParams(activeZone).temperature.schedules" :key="sIdx"
               :model-value="sch" :index="sIdx" mode="binary" type="setpoint" :param-label="t('building.setpoint.combined')"
               :conflict-message="isScheduleInConflict(getCombinedSetpointParams(activeZone).temperature.schedules, sIdx) ? t('building.schedule.conflictWarning') : ''"
@@ -1240,9 +1426,109 @@ onUnmounted(() => {
                 </div>
               </template>
             </ScheduleEditor>
+            </template>
             <div class="schedule-note">{{ t('building.schedule.unspecifiedNote') }}</div>
           </div>
+          </template>
+          <div v-else class="detail-block-placeholder" />
         </div>
+        </template>
+
+        <!-- Batch (multi-zone) modular editor -->
+        <template v-else>
+          <div class="batch-section-list">
+            <div v-for="section in BATCH_SECTIONS" :key="section" class="batch-section-row" :class="{ 'is-editing': batchEditingSection === section }">
+              <div class="batch-section-row-header">
+                <span class="batch-section-label">{{ t(BATCH_SECTION_LABELS[section]) }}</span>
+                <div v-if="batchEditingSection !== section" class="batch-section-row-actions">
+                  <el-button type="primary" plain size="small" :disabled="batchEditingSection !== null && batchEditingSection !== section"
+                    @click="openBatchSectionEditor(section)">
+                    {{ t('building.zone.batchSetSection', { name: t(BATCH_SECTION_LABELS[section]) }) }}
+                  </el-button>
+                </div>
+                <div v-else class="batch-section-row-actions">
+                  <el-button size="small" @click="cancelBatchSectionEditor">{{ t('common.cancel') }}</el-button>
+                  <el-button type="primary" size="small" @click="applyBatchSectionEditor">
+                    {{ t('building.zone.applyToSelected', { count: selectedCount }) }}
+                  </el-button>
+                </div>
+              </div>
+              <div v-if="batchEditingSection === section" class="batch-section-editor">
+                <div class="batch-section-hint">{{ t('building.zone.batchEditorHint') }}</div>
+                <!-- Internal-gain section (people/lighting/equipment/fresh) -->
+                <template v-if="section !== 'setpoint' && batchDraftParam">
+                  <div class="ig-param">
+                    <div class="ig-param-header">
+                      <span class="ig-param-label">{{ t(BATCH_SECTION_LABELS[section]) }}</span>
+                      <div class="ig-inline-controls">
+                        <div class="ig-unit-input">
+                          <el-input-number v-model="batchDraftParam.fixed_value" :min="0" :max="500" :step="0.1" :precision="2" :controls="false" size="small" class="ig-number" />
+                          <span class="ig-unit-text">{{ section === 'people_density' ? '人/㎡' : paramUnit(section) }}</span>
+                        </div>
+                        <template v-if="section === 'people_density'">
+                          <span class="ig-multiply">×</span>
+                          <div class="ig-unit-input">
+                            <el-input-number v-model="batchDraftHeatGain" :min="0" :max="500" :precision="0" :step="1" :controls="false" size="small" class="ig-number ig-number--heat" />
+                            <span class="ig-unit-text">W/人</span>
+                          </div>
+                        </template>
+                      </div>
+                      <el-button type="primary" plain size="small" :icon="Plus" class="ig-schedule-button"
+                        :disabled="batchDraftParam.schedules.length >= MAX_SCHEDULES"
+                        @click="addScheduleForParam(batchDraftParam)">
+                        {{ t('building.schedule.editor.schedule') }}
+                      </el-button>
+                    </div>
+                    <div class="ig-schedules">
+                      <ScheduleEditor v-for="(sch, sIdx) in batchDraftParam.schedules" :key="sIdx" :model-value="sch"
+                        :peak-value="batchDraftParam.fixed_value" :unit="paramUnit(section)" :type="paramType(section)"
+                        :param-label="t(BATCH_SECTION_LABELS[section])" :removable="batchDraftParam.schedules.length > 1"
+                        :conflict-message="getInternalScheduleConflictMsg(batchDraftParam.schedules, sIdx)"
+                        @update:model-value="(v: DaySchedule) => updateScheduleAt(batchDraftParam!, sIdx, v)"
+                        @remove="removeScheduleAt(batchDraftParam!, sIdx)" />
+                    </div>
+                  </div>
+                </template>
+                <!-- Setpoint (combined temperature + humidity) -->
+                <template v-else-if="section === 'setpoint' && batchDraftZone">
+                  <div class="param-row setpoint-param-row">
+                    <div class="param-header setpoint-param-header">
+                      <span class="param-label">{{ t('building.setpoint.combined') }}</span>
+                      <el-button type="primary" plain size="small" @click="addCombinedSetpointSchedule(batchDraftZone)"
+                        :disabled="getCombinedSetpointParams(batchDraftZone).temperature.schedules.length >= MAX_SCHEDULES">
+                        + {{ t('building.schedule.addDayGroup') }}
+                        ({{ getCombinedSetpointParams(batchDraftZone).temperature.schedules.length }}/{{ MAX_SCHEDULES }})
+                      </el-button>
+                    </div>
+                    <div class="param-schedules setpoint-schedules">
+                      <ScheduleEditor v-for="(sch, sIdx) in getCombinedSetpointParams(batchDraftZone).temperature.schedules" :key="sIdx"
+                        :model-value="sch" :index="sIdx" mode="binary" type="setpoint" :param-label="t('building.setpoint.combined')"
+                        :conflict-message="isScheduleInConflict(getCombinedSetpointParams(batchDraftZone).temperature.schedules, sIdx) ? t('building.schedule.conflictWarning') : ''"
+                        :removable="getCombinedSetpointParams(batchDraftZone).temperature.schedules.length > 1"
+                        @update:model-value="(value: DaySchedule) => updateCombinedSetpointSchedule(batchDraftZone!, sIdx, value)"
+                        @remove="removeCombinedSetpointSchedule(batchDraftZone!, sIdx)">
+                        <template #before-meta>
+                          <div class="setpoint-value-settings">
+                            <div class="setpoint-value-row">
+                              <span class="schedule-sub-label">{{ t('building.setpoint.temperature') }} ({{ paramUnit('temperature') }})</span>
+                              <el-input-number :model-value="sch.value" :min="10" :max="35" :precision="1" :step="0.5" :controls="false" size="small" class="setpoint-value-input"
+                                @update:model-value="(v: number | undefined) => updateCombinedSetpointValue(batchDraftZone!, sIdx, 'temperature', v)" />
+                            </div>
+                            <div class="setpoint-value-row">
+                              <span class="schedule-sub-label">{{ t('building.setpoint.humidity') }} ({{ paramUnit('relative_humidity') }})</span>
+                              <el-input-number :model-value="getCombinedSetpointParams(batchDraftZone).relative_humidity.schedules[sIdx].value" :min="20" :max="90" :precision="0" :step="5" :controls="false" size="small" class="setpoint-value-input"
+                                @update:model-value="(v: number | undefined) => updateCombinedSetpointValue(batchDraftZone!, sIdx, 'relative_humidity', v)" />
+                            </div>
+                          </div>
+                        </template>
+                      </ScheduleEditor>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </template>
       </el-form>
     </el-card>
   </div>
@@ -1709,6 +1995,96 @@ onUnmounted(() => {
 .zone-card {
   border-radius: 12px;
   border: 1px solid #e2e8f0;
+}
+
+.zone-card-empty :deep(.el-card__body) {
+  padding: 24px;
+}
+
+.zone-card-batch {
+  border-color: rgba(59, 130, 246, 0.45);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.08);
+}
+
+.zone-card-batch :deep(.el-card__header) {
+  background: linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%);
+}
+
+.is-batch-editing :deep(.el-input__inner::placeholder),
+.is-batch-editing :deep(.el-input-number .el-input__inner::placeholder) {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.mixed-schedule-warning {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 12px;
+  border: 1px solid #fde68a;
+}
+
+.batch-section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.batch-section-row {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.batch-section-row.is-editing {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: #f8fafc;
+}
+
+.batch-section-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.batch-section-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: #1f2937;
+}
+
+.batch-section-row-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.batch-section-editor {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.batch-section-hint {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  border: 1px solid #bfdbfe;
+}
+
+.detail-block-placeholder {
+  min-height: 220px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px dashed #e2e8f0;
 }
 
 .zone-card :deep(.el-card__header) {

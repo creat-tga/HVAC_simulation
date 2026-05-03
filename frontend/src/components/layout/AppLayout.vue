@@ -56,7 +56,7 @@ watch(() => route.fullPath, () => {
 .app-layout {
   height: 100vh;
   height: 100dvh;
-  background: #f1f5f9;
+  background: var(--app-bg);
 }
 
 .app-body {

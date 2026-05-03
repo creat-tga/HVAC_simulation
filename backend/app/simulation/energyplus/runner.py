@@ -41,17 +41,7 @@ def _run_single_ep(
         )
 
         if proc.returncode != 0:
-            err = proc.stderr[:500] if proc.stderr else ""
-            # Read EnergyPlus error file for details
-            err_file = work_dir / "eplusout.err"
-            if err_file.is_file():
-                err_content = err_file.read_text(encoding="utf-8", errors="replace")
-                # Extract severe/fatal lines
-                severe_lines = [
-                    l for l in err_content.splitlines()
-                    if "** Severe  **" in l or "** Fatal  **" in l
-                ]
-                err += "\n" + "\n".join(severe_lines[-10:])
+            err = _energyplus_error_message(proc, work_dir, stderr_limit=500)
             raise RuntimeError(f"EnergyPlus exited with code {proc.returncode}: {err}")
 
         csv_path = work_dir / "eplusout.csv"
@@ -61,6 +51,32 @@ def _run_single_ep(
         return parse_load_results(csv_path, 1)
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def _energyplus_error_message(
+    proc: subprocess.CompletedProcess[str],
+    work_dir: Path,
+    *,
+    stderr_limit: int,
+) -> str:
+    err = proc.stderr[:stderr_limit] if proc.stderr else ""
+    err_file = work_dir / "eplusout.err"
+    if err_file.is_file():
+        err_content = err_file.read_text(encoding="utf-8", errors="replace")
+        severe_lines: list[str] = []
+        capture_context = False
+        for line in err_content.splitlines():
+            if "** Severe  **" in line or "** Fatal  **" in line:
+                severe_lines.append(line)
+                capture_context = True
+            elif capture_context and "**   ~~~   **" in line:
+                severe_lines.append(line)
+            elif line.startswith("   **"):
+                capture_context = False
+        if severe_lines:
+            err = f"{err}\n" if err else ""
+            err += "\n".join(severe_lines[-20:])
+    return err
 
 
 class EnergyPlusRunner:
@@ -138,7 +154,7 @@ class EnergyPlusRunner:
             )
 
             if proc.returncode != 0:
-                err = proc.stderr[:1000] if proc.stderr else ""
+                err = _energyplus_error_message(proc, work_dir, stderr_limit=1000)
                 log.error("EnergyPlus failed (rc=%d): %s", proc.returncode, err)
                 raise RuntimeError(f"EnergyPlus exited with code {proc.returncode}: {err}")
 

@@ -61,9 +61,11 @@ function go(tab: Tab) {
   align-items: stretch;
   justify-content: space-around;
   padding: 4px 4px calc(4px + env(safe-area-inset-bottom, 0px));
-  background: var(--surface-base);
-  border-top: 1px solid var(--border-subtle);
-  box-shadow: 0 -2px 8px rgba(15, 23, 42, 0.06);
+  background: var(--glass-bottom-nav-bg);
+  border-top: 1px solid var(--glass-bottom-nav-border);
+  box-shadow: var(--glass-bottom-nav-shadow);
+  backdrop-filter: blur(var(--glass-bottom-nav-blur)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--glass-bottom-nav-blur)) saturate(150%);
   z-index: 1000;
 }
 .mb-tab {
@@ -76,14 +78,14 @@ function go(tab: Tab) {
   padding: 6px 4px;
   background: transparent;
   border: none;
-  color: var(--text-secondary);
+  color: var(--glass-bottom-nav-text);
   cursor: pointer;
   transition: color var(--motion-fast) var(--easing-standard);
   -webkit-tap-highlight-color: transparent;
 }
-.mb-tab:active { background: var(--color-neutral-100); }
+.mb-tab:active { background: var(--glass-bottom-nav-press-bg); }
 .mb-tab.active {
-  color: var(--brand-primary);
+  color: var(--glass-bottom-nav-active);
 }
 .mb-tab-label {
   font-size: 10px;

@@ -1,0 +1,10 @@
+<svg width="24" height="24" viewBox="0 0 24 24" role="img" aria-label="Building inactive icon" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="4.8" y="3.7" width="8.4" height="15.8" rx="2.1" stroke="#94A3B8" stroke-width="1.75" stroke-linejoin="round"/>
+  <rect x="13.2" y="8.1" width="6" height="11.4" rx="1.9" stroke="#94A3B8" stroke-width="1.75" stroke-linejoin="round"/>
+  <path d="M3.4 19.5H20.6" stroke="#94A3B8" stroke-width="1.75" stroke-linecap="round"/>
+  <path d="M7.45 7.15H10.55" stroke="#94A3B8" stroke-width="1.65" stroke-linecap="round"/>
+  <path d="M7.45 10.55H10.55" stroke="#94A3B8" stroke-width="1.65" stroke-linecap="round"/>
+  <path d="M7.45 13.95H10.55" stroke="#94A3B8" stroke-width="1.65" stroke-linecap="round"/>
+  <path d="M15.45 11.7H16.95" stroke="#94A3B8" stroke-width="1.65" stroke-linecap="round"/>
+  <path d="M15.45 14.85H16.95" stroke="#94A3B8" stroke-width="1.65" stroke-linecap="round"/>
+</svg>

@@ -35,6 +35,8 @@ SETPOINT_DEADBAND = 6.0
 FILM_R_INT = 0.12   # 内表面膜热阻（对流+辐射）
 FILM_R_EXT = 0.04   # 外表面膜热阻
 
+_MONTH_DAYS = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+
 
 # ---------------------------------------------------------------------------
 # 参数校验
@@ -138,6 +140,31 @@ def _sn(name: str) -> str:
     return name.replace(" ", "_").replace(",", "").replace(";", "").replace("!", "")[:40]
 
 
+def _zone_object_name(zone_id: str, zone: dict[str, Any]) -> str:
+    """Return a non-empty, IDF-safe zone name.
+
+    User-created zones can have an empty display name. EnergyPlus requires the
+    zone name field on surfaces, people, lights, and equipment objects, so fall
+    back to the zone id when the display name is blank after sanitizing.
+    """
+    raw_name = zone.get("name")
+    raw = _sn(str(raw_name)) if raw_name is not None else _sn(str(zone_id))
+    return raw or _sn(str(zone_id)) or "Zone"
+
+
+def _day_of_year(month: int, day: int) -> int:
+    return sum(_MONTH_DAYS[:month - 1]) + day
+
+
+def _month_day_from_ordinal(ordinal: int) -> tuple[int, int]:
+    remaining = ordinal
+    for month, days_in_month in enumerate(_MONTH_DAYS, start=1):
+        if remaining <= days_in_month:
+            return month, remaining
+        remaining -= days_in_month
+    return 12, 31
+
+
 def _vstr(x: float, y: float, z: float) -> str:
     """将三维坐标点格式化为IDF顶点字符串。"""
     return f"  {x:.4f}, {y:.4f}, {z:.4f}"
@@ -216,7 +243,7 @@ def generate_idf(
     # 避免 EnergyPlus 因重复对象名报 Severe Error
     name_counts: dict[str, int] = {}
     for zone_id, zone in zones.items():
-        raw = _sn(zone.get("name", zone_id))
+        raw = _zone_object_name(str(zone_id), zone)
         name_counts[raw] = name_counts.get(raw, 0) + 1
         zn = raw if name_counts[raw] == 1 else f"{raw}_{name_counts[raw]}"
         zone_names.append(zn)
@@ -258,6 +285,17 @@ def generate_idf(
             ht_off = temp_val["fixed_value"] - SETPOINT_DEADBAND
         parts.append(_offset_schedule(ht_sn, temp_val, -SETPOINT_DEADBAND, off_value=ht_off))
         sched_map["heating_sp"] = ht_sn
+
+        availability_sched = f"{zn}_HVAC_Availability"
+        availability_obj = _setpoint_availability_schedule(
+            availability_sched,
+            zone.get("temperature"),
+            zone.get("relative_humidity"),
+        )
+        if availability_obj:
+            parts.append(availability_obj)
+        else:
+            availability_sched = "Always_On"
 
         # ---- 人员活动水平（散热量 W/人，每区域独立） ----
         heat_gain = float(zone.get("people_heat_gain", 134.0))
@@ -302,7 +340,7 @@ def generate_idf(
 
         # ---- HVAC 系统（温控器 + 理想负荷机组 + 设备连接）----
         parts.append(_thermostat(zn, sched_map["temperature"], sched_map["heating_sp"]))
-        parts.append(_ideal_loads(zn))
+        parts.append(_ideal_loads(zn, availability_sched))
         parts.append(_zone_equipment(zn))
 
         # 下一个热区沿 X 轴偏移（当前区域宽度 + 5m 间距）
@@ -769,7 +807,16 @@ def _param_config_schedule(name: str, param: dict[str, Any] | float | int | None
         periods.setdefault(key, []).append(s)
 
     parts: list[str] = []
-    year_entries: list[str] = []
+    default_day = f"{name}_Default_D0"
+    default_week = f"{name}_Default_W"
+    default_values = ", ".join(str(default) for _ in range(24))
+    parts.append(f"Schedule:Day:Hourly, {default_day}, Any Number, {default_values};")
+    parts.append(
+        f"Schedule:Week:Daily, {default_week}, "
+        + ", ".join([default_day] * 12)
+        + ";"
+    )
+    period_weeks: list[tuple[int, int, int, int, str]] = []
 
     for pi, ((sm, sd, em, ed), entries) in enumerate(sorted(periods.items())):
         # 创建 7×24 矩阵：索引 0=周一 .. 6=周日，初始化为 off_value
@@ -820,7 +867,36 @@ def _param_config_schedule(name: str, param: dict[str, Any] | float | int | None
         ]
         week += [dow_names[6]] * 5  # 假日和特殊日按周日处理
         parts.append(f"Schedule:Week:Daily, {wk}, " + ", ".join(week) + ";")
-        year_entries.append(f"  {wk}, {sm}, {sd}, {em}, {ed}")
+        period_weeks.append((sm, sd, em, ed, wk))
+
+    calendar_weeks = [default_week] * 366
+    for start_month, start_day, end_month, end_day, week_name in period_weeks:
+        start_ordinal = _day_of_year(start_month, start_day)
+        end_ordinal = _day_of_year(end_month, end_day)
+        ranges = (
+            [(start_ordinal, end_ordinal)]
+            if start_ordinal <= end_ordinal
+            else [(start_ordinal, 365), (1, end_ordinal)]
+        )
+        for range_start, range_end in ranges:
+            for ordinal in range(range_start, range_end + 1):
+                calendar_weeks[ordinal] = week_name
+
+    year_entries: list[str] = []
+    range_start = 1
+    current_week = calendar_weeks[1]
+    for ordinal in range(2, 366):
+        if calendar_weeks[ordinal] == current_week:
+            continue
+        start_month, start_day = _month_day_from_ordinal(range_start)
+        end_month, end_day = _month_day_from_ordinal(ordinal - 1)
+        year_entries.append(f"  {current_week}, {start_month}, {start_day}, {end_month}, {end_day}")
+        range_start = ordinal
+        current_week = calendar_weeks[ordinal]
+
+    start_month, start_day = _month_day_from_ordinal(range_start)
+    end_month, end_day = _month_day_from_ordinal(365)
+    year_entries.append(f"  {current_week}, {start_month}, {start_day}, {end_month}, {end_day}")
 
     # 年 schedule：将所有日期范围与周 schedule 关联
     parts.append(f"Schedule:Year, {name}, Any Number,\n" + ",\n".join(year_entries) + ";")
@@ -850,6 +926,45 @@ def _offset_schedule(name: str, param: dict[str, Any] | float | int | None,
         for s in param.get("schedules", [])
     ]
     return _param_config_schedule(name, shifted, off_value=off_value)
+
+
+def _setpoint_availability_schedule(
+    name: str,
+    *params: dict[str, Any] | float | int | None,
+) -> str | None:
+    schedules: list[dict[str, Any]] = []
+    for param in params:
+        if not (
+            isinstance(param, dict)
+            and param.get("mode") == "scheduled"
+            and param.get("schedules")
+        ):
+            continue
+        for schedule in param["schedules"]:
+            item = {**schedule, "value": 1.0}
+            ratios = schedule.get("hourly_ratios")
+            if isinstance(ratios, list) and len(ratios) == 24:
+                item["hourly_ratios"] = [
+                    100 if _coerce_float(ratio) > 0 else 0
+                    for ratio in ratios
+                ]
+            schedules.append(item)
+
+    if not schedules:
+        return None
+
+    return _param_config_schedule(
+        name,
+        {"mode": "scheduled", "fixed_value": 1.0, "schedules": schedules},
+        off_value=0.0,
+    )
+
+
+def _coerce_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -950,7 +1065,7 @@ def _thermostat(zn: str, cool_sched: str, heat_sched: str) -> str:
     )
 
 
-def _ideal_loads(zn: str) -> str:
+def _ideal_loads(zn: str, availability_sched: str = "Always_On") -> str:
     """生成 ZoneHVAC:IdealLoadsAirSystem 对象（理想负荷空调系统）。
 
     这不是物理设备模型，而是 EnergyPlus 提供的理想系统，
@@ -970,7 +1085,7 @@ def _ideal_loads(zn: str) -> str:
     return (
         f"ZoneHVAC:IdealLoadsAirSystem,\n"
         f"  {zn}_IdealLoads,\n"
-        f"  ,\n"                             # Availability schedule (always)
+        f"  {availability_sched},\n"          # Availability schedule
         f"  {zn}_IdealLoads_SupplyInlet,\n"  # Zone Supply Air Node
         f"  ,\n"                             # Zone Exhaust Air Node
         f"  ,\n"                             # System Inlet Air Node (blank)
@@ -980,7 +1095,7 @@ def _ideal_loads(zn: str) -> str:
         f"  0.0077,\n"                       # Min Cooling Humidity Ratio
         f"  NoLimit, , ,\n"                  # Heating limit
         f"  NoLimit, , ,\n"                  # Cooling limit
-        f"  , ,\n"                           # Heat/Cool availability
+        f"  {availability_sched}, {availability_sched},\n"  # Heat/Cool availability
         f"  ConstantSensibleHeatRatio, 0.7,\n"
         f"  None,\n"                         # Humidification Control
         f"  {zn}_DSOA,\n"                    # Design Spec OA

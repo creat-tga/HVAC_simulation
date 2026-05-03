@@ -2,11 +2,12 @@
 /**
  * Project workspace layout: left sidebar with 3 stages (建筑 / 系统 / 可视化).
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '@/stores/project'
 import { getProject } from '@/api/projects'
+import { useEdgeBounce } from '@/composables/useEdgeBounce'
 import {
   OfficeBuilding,
   Setting,
@@ -17,20 +18,35 @@ import {
   Location,
 } from '@element-plus/icons-vue'
 import TopActionBar from '@/components/layout/TopActionBar.vue'
+import buildingActiveIcon from '@/assets/mobile-nav-icons/building-active.svg'
+import buildingInactiveIcon from '@/assets/mobile-nav-icons/building-inactive.svg'
+import systemActiveIcon from '@/assets/mobile-nav-icons/system-active.svg'
+import systemInactiveIcon from '@/assets/mobile-nav-icons/system-inactive.svg'
+import visualizationActiveIcon from '@/assets/mobile-nav-icons/visualization-active.svg'
+import visualizationInactiveIcon from '@/assets/mobile-nav-icons/visualization-inactive.svg'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const store = useProjectStore()
-
 const projectId = computed(() => route.params.projectId as string)
 const SIDEBAR_NAV_COLOR = 'var(--brand-primary)'
+const wsContentRef = ref<HTMLElement | null>(null)
+let scrollIdleTimer: number | null = null
+let scrollCleanup: (() => void) | null = null
+
+useEdgeBounce(wsContentRef, {
+  maxOffset: 50,
+  resistance: 0.38,
+})
 
 interface NavItem {
   key: string
   label: string
   desc: string
   icon: any
+  activeIcon: string
+  inactiveIcon: string
   path: string
   matches: string[]
   step: number
@@ -43,6 +59,8 @@ const navItems = computed<NavItem[]>(() => [
     label: t('workspace.building'),
     desc: t('workspace.buildingHint'),
     icon: OfficeBuilding,
+    activeIcon: buildingActiveIcon,
+    inactiveIcon: buildingInactiveIcon,
     path: `/projects/${projectId.value}/building`,
     matches: ['workspaceBuilding', 'building', 'loadCalc'],
     step: 1,
@@ -53,6 +71,8 @@ const navItems = computed<NavItem[]>(() => [
     label: t('workspace.system'),
     desc: t('workspace.systemHint'),
     icon: Setting,
+    activeIcon: systemActiveIcon,
+    inactiveIcon: systemInactiveIcon,
     path: `/projects/${projectId.value}/system-schemes`,
     matches: ['workspaceSystem', 'systemSchemeList', 'systemSchemeDetail', 'systemSelect', 'simulation'],
     step: 2,
@@ -63,6 +83,8 @@ const navItems = computed<NavItem[]>(() => [
     label: t('workspace.visualization'),
     desc: t('viz.entryHint'),
     icon: PieChart,
+    activeIcon: visualizationActiveIcon,
+    inactiveIcon: visualizationInactiveIcon,
     path: `/projects/${projectId.value}/visualization`,
     matches: ['workspaceViz', 'workspaceVizLoads', 'workspaceVizEnergy', 'report'],
     step: 3,
@@ -85,8 +107,39 @@ async function loadProject() {
   }
 }
 
-watch(projectId, loadProject, { immediate: false })
-onMounted(loadProject)
+function clearMobileActionScrolling() {
+  document.body.classList.remove('is-workspace-content-scrolling')
+  if (scrollIdleTimer !== null) {
+    window.clearTimeout(scrollIdleTimer)
+    scrollIdleTimer = null
+  }
+}
+
+function setupMobileActionScrollState() {
+  scrollCleanup?.()
+  scrollCleanup = null
+  const el = wsContentRef.value
+  if (!el) return
+
+  const onScroll = () => {
+    document.body.classList.add('is-workspace-content-scrolling')
+    if (scrollIdleTimer !== null) window.clearTimeout(scrollIdleTimer)
+    scrollIdleTimer = window.setTimeout(clearMobileActionScrolling, 800)
+  }
+
+  el.addEventListener('scroll', onScroll, { passive: true })
+  scrollCleanup = () => {
+    el.removeEventListener('scroll', onScroll)
+    clearMobileActionScrolling()
+  }
+}
+
+onMounted(() => {
+  void loadProject()
+  setupMobileActionScrollState()
+})
+onUnmounted(() => scrollCleanup?.())
+watch(projectId, () => { void loadProject() })
 
 // G-2: sidebar collapse state with localStorage persistence
 const SIDEBAR_KEY = 'hvac_workspace_sidebar_collapsed'
@@ -142,7 +195,10 @@ function toggleSidebar() {
             <div class="ws-item-step">{{ item.step }}</div>
             <div v-if="!sidebarCollapsed" class="ws-item-body">
               <div class="ws-item-title">
-                <el-icon :size="14"><component :is="item.icon" /></el-icon>
+                <span class="ws-stage-mobile-icon" aria-hidden="true">
+                  <img :src="isActive(item) ? item.activeIcon : item.inactiveIcon" alt="" />
+                </span>
+                <el-icon class="ws-stage-desktop-icon" :size="14"><component :is="item.icon" /></el-icon>
                 <span>{{ item.label }}</span>
               </div>
               <div class="ws-item-desc">{{ item.desc }}</div>
@@ -161,7 +217,7 @@ function toggleSidebar() {
       <TopActionBar />
       <!-- 视图自定义顶栏挂载点（Teleport 目标），位于 .ws-content 之外，不参与滚动 -->
       <div id="ws-mobile-topbar-slot"></div>
-      <div class="ws-content">
+      <div ref="wsContentRef" class="ws-content">
         <router-view />
       </div>
     </main>
@@ -173,13 +229,13 @@ function toggleSidebar() {
   display: flex;
   height: 100vh;
   height: 100dvh;
-  background: linear-gradient(135deg, var(--color-neutral-50) 0%, var(--brand-primary-soft) 100%);
+  background: var(--app-bg);
 }
 
 .ws-side {
   width: 264px;
   flex-shrink: 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 250, 252, 0.85) 100%);
+  background: var(--surface-base);
   backdrop-filter: blur(16px);
   border-right: 1px solid rgba(226, 232, 240, 0.6);
   padding: 16px 14px;
@@ -311,7 +367,7 @@ function toggleSidebar() {
   letter-spacing: 0.12em;
   color: var(--text-muted);
   text-transform: uppercase;
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-regular);
   padding: 8px 8px 0;
 }
 
@@ -366,6 +422,13 @@ function toggleSidebar() {
   margin-bottom: 2px;
 }
 .ws-item.active .ws-item-title { color: var(--c); }
+.ws-stage-mobile-icon { display: none; }
+.ws-stage-mobile-icon img {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+.ws-stage-desktop-icon { flex: 0 0 auto; }
 .ws-item-desc {
   font-size: 11.5px;
   color: var(--text-muted);
@@ -402,11 +465,40 @@ function toggleSidebar() {
 }
 
 @media (max-width: 768px) {
-  .ws-content {
-    padding: 10px 0;
-    margin: 0;
+  .ws-layout {
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
   }
-  .ws-layout { flex-direction: column; }
+  .ws-main {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+  .ws-content {
+    position: relative;
+    z-index: 0;
+    padding: 10px 0 calc(64px + env(safe-area-inset-bottom, 0px));
+    margin: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    scrollbar-gutter: stable;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+    scroll-behavior: auto;
+  }
+  .ws-main :deep(.top-bar),
+  #ws-mobile-topbar-slot {
+    position: relative;
+    z-index: 30;
+  }
 
   /* 底部 tab bar 模式（仅阶段切换，返回按钮在 TopActionBar 左上角） */
   .ws-side, .ws-side--collapsed {
@@ -419,14 +511,16 @@ function toggleSidebar() {
     flex-direction: row;
     justify-content: space-around;
     align-items: stretch;
-    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    padding: 3px 8px calc(3px + env(safe-area-inset-bottom, 0px));
     gap: 4px;
     overflow-x: hidden;
     overflow-y: hidden;
-    border-top: 1px solid var(--border-subtle);
+    border-top: 1px solid var(--glass-bottom-nav-border);
     border-right: none;
-    background: var(--surface-base);
-    box-shadow: 0 -2px 8px rgba(15, 23, 42, 0.06);
+    background: var(--glass-bottom-nav-bg);
+    box-shadow: var(--glass-bottom-nav-shadow);
+    backdrop-filter: blur(var(--glass-bottom-nav-blur)) saturate(150%);
+    -webkit-backdrop-filter: blur(var(--glass-bottom-nav-blur)) saturate(150%);
     z-index: 100;
     transition: none;
   }
@@ -447,18 +541,69 @@ function toggleSidebar() {
     align-items: center;
     justify-content: center;
     gap: 2px;
-    padding: 6px 4px;
+    padding: 3px 4px;
     width: auto;
     text-align: center;
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    outline: none;
+    -webkit-tap-highlight-color: transparent;
+    appearance: none;
+    user-select: none;
+  }
+  .ws-item:hover,
+  .ws-item.active,
+  .ws-item:focus,
+  .ws-item:focus-visible {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    outline: none;
+  }
+  .ws-item:active {
+    background: var(--glass-bottom-nav-press-bg);
+    box-shadow: none;
   }
   .ws-item-step { display: none; }
   .ws-item-body { display: flex; flex-direction: column; align-items: center; gap: 0; }
-  .ws-item-title { font-size: 10px; gap: 2px; flex-direction: column; }
+  .ws-item-title {
+    font-size: 10px;
+    gap: 3px;
+    font-weight: var(--font-weight-regular);
+    flex-direction: column;
+    transition: color 0.18s ease, transform 0.18s ease;
+  }
   .ws-item-title span { font-size: 10px; }
+  .ws-stage-desktop-icon { display: none; }
+  .ws-stage-mobile-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    transform-origin: center;
+    transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), filter 0.22s ease, opacity 0.22s ease;
+  }
+  .ws-stage-mobile-icon img {
+    width: 28px;
+    height: 28px;
+  }
+  .ws-item.active .ws-stage-mobile-icon {
+    transform: translateY(0);
+    filter: drop-shadow(0 5px 8px rgba(99, 102, 241, 0.22));
+    animation: ws-mobile-nav-pop 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .ws-item.active .ws-item-title { color: var(--glass-bottom-nav-active); }
   .ws-item-desc { display: none; }
 
-  /* main 预留 tab bar 高度 */
-  .ws-main { padding-bottom: 56px; }
-  .ws-content { padding-bottom: 8px; }
+  /* 内容区独立滚动，顶栏/底栏/悬浮按钮保持固定，不参与浏览器回弹拉伸。 */
+  .ws-main { padding-bottom: 0; }
+}
+
+@keyframes ws-mobile-nav-pop {
+  0% { transform: translateY(0); opacity: 0.72; }
+  55% { transform: translateY(-4px); opacity: 1; }
+  100% { transform: translateY(0); opacity: 1; }
 }
 </style>

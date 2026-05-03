@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AddWorkspaceItemIcon: typeof import('./components/icons/AddWorkspaceItemIcon.vue')['default']
     AppHeader: typeof import('./components/layout/AppHeader.vue')['default']
     AppLayout: typeof import('./components/layout/AppLayout.vue')['default']
     AppSidebar: typeof import('./components/layout/AppSidebar.vue')['default']
@@ -85,6 +86,7 @@ declare module 'vue' {
     ScheduleEditor: typeof import('./components/building/ScheduleEditor.vue')['default']
     SimulationProgress: typeof import('./components/simulation/SimulationProgress.vue')['default']
     SliderVerify: typeof import('./components/login/SliderVerify.vue')['default']
+    StartSimulationIcon: typeof import('./components/icons/StartSimulationIcon.vue')['default']
     StepNav: typeof import('./components/layout/StepNav.vue')['default']
     StrategyValueProfileEditor: typeof import('./components/scheme/StrategyValueProfileEditor.vue')['default']
     SubsystemEditor: typeof import('./components/scheme/SubsystemEditor.vue')['default']

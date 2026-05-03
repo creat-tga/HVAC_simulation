@@ -108,13 +108,13 @@ const isActive = (item: NavItem) => item.matches.includes(route.name as string)
   display: flex;
   height: 100vh;
   height: 100dvh;
-  background: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+  background: var(--app-bg);
 }
 
 .hl-sidebar {
   width: 240px;
   flex-shrink: 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 250, 252, 0.85) 100%);
+  background: var(--surface-base);
   backdrop-filter: blur(16px);
   border-right: 1px solid rgba(226, 232, 240, 0.6);
   display: flex;
@@ -223,6 +223,7 @@ const isActive = (item: NavItem) => item.matches.includes(route.name as string)
 
 @media (max-width: 768px) {
   .home-layout { flex-direction: column; }
-  .hl-main { padding-bottom: 56px; }
+  .hl-main { padding-bottom: 0; }
+  .hl-content { padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
 }
 </style>

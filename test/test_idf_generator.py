@@ -168,7 +168,7 @@ class TestValidation:
             _validate_zone("z1", zone)
 
     def test_floor_height_too_large(self):
-        zone = _make_zone(floor_height=100.0)
+        zone = _make_zone(floor_height=100.1)
         with pytest.raises(ZoneValidationError, match="值超限"):
             _validate_zone("z1", zone)
 
@@ -260,6 +260,44 @@ class TestGenerateIdf:
         zones = {"my_zone": _make_zone()}  # 没有显式 name
         idf = generate_idf(zones, DEFAULT_LOCATION)
         assert "my_zone" in idf
+
+    def test_blank_zone_name_falls_back_to_zone_id(self):
+        """zone name 为空字符串时也必须生成非空 zone_name。"""
+        zones = {"zone_1": _make_zone(name="")}
+        idf = generate_idf(zones, DEFAULT_LOCATION)
+        assert "zone_1" in idf
+        assert "  zone_1_Floor, Floor" in idf
+        assert "  _Floor, Floor" not in idf
+
+    def test_partial_year_schedule_fills_missing_dates(self):
+        """Schedule:Year 必须补齐没有显式配置的日期。"""
+        zones = {
+            "z1": _make_zone(temperature={
+                "mode": "scheduled",
+                "fixed_value": 26.0,
+                "schedules": [
+                    {
+                        "start_month": 6,
+                        "start_day": 15,
+                        "end_month": 10,
+                        "end_day": 15,
+                        "days": [1, 2, 3, 4, 5, 6, 7],
+                        "hours": list(range(8, 18)),
+                        "value": 26.0,
+                    },
+                ],
+            }),
+        }
+        idf = generate_idf(zones, DEFAULT_LOCATION)
+        assert "Schedule:Year, z1_temperature" in idf
+        assert "  z1_temperature_Default_W, 1, 1, 6, 14" in idf
+        assert "  z1_temperature_W0, 6, 15, 10, 15" in idf
+        assert "  z1_temperature_Default_W, 10, 16, 12, 31" in idf
+        assert "Schedule:Year, z1_HVAC_Availability" in idf
+        assert "  z1_HVAC_Availability_Default_W, 1, 1, 6, 14" in idf
+        assert "  z1_HVAC_Availability_W0, 6, 15, 10, 15" in idf
+        assert "  z1_HVAC_Availability_Default_W, 10, 16, 12, 31" in idf
+        assert "  z1_HVAC_Availability,\n  z1_IdealLoads_SupplyInlet" in idf
 
     def test_dict_zones_required(self):
         """zones 为列表 → 报错。"""

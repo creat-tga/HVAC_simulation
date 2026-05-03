@@ -16,19 +16,20 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Plus,
   Delete,
-  VideoPlay,
-  OfficeBuilding,
-  Setting,
   Edit,
+  Tickets,
+  Sunny,
+  CopyDocument,
 } from '@element-plus/icons-vue'
 import { useSystemSchemeStore } from '@/stores/system-scheme'
 import { useProjectStore } from '@/stores/project'
 import { useResponsive } from '@/composables/useResponsive'
 import { getSimulations } from '@/api/simulation'
-import { updateScheme } from '@/api/system-scheme'
-import type { SystemSchemeCreate } from '@/types/system-scheme'
+import { getScheme, updateScheme } from '@/api/system-scheme'
+import AddWorkspaceItemIcon from '@/components/icons/AddWorkspaceItemIcon.vue'
+import StartSimulationIcon from '@/components/icons/StartSimulationIcon.vue'
+import type { Subsystem, SystemSchemeCreate } from '@/types/system-scheme'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,11 +39,13 @@ const projectStore = useProjectStore()
 const { isMobile } = useResponsive()
 
 const projectId = computed(() => route.params.projectId as string)
+const copyingSchemes = ref<Set<string>>(new Set())
 
 // ------- 建筑候选（仅展示已完成负荷仿真的建筑作为可绑定项）-------
 interface BuildingOpt {
   id: string
   name: string
+  area: number | null
   hasLoad: boolean
 }
 const buildingOpts = ref<BuildingOpt[]>([])
@@ -61,9 +64,9 @@ async function loadBuildings() {
         const done = data.filter(
           (r) => r.status === 'completed' && r.simulation_type === 'load',
         )
-        opts.push({ id: b.id, name: b.name, hasLoad: done.length > 0 })
+        opts.push({ id: b.id, name: b.name, area: b.total_area ?? null, hasLoad: done.length > 0 })
       } catch {
-        opts.push({ id: b.id, name: b.name, hasLoad: false })
+        opts.push({ id: b.id, name: b.name, area: b.total_area ?? null, hasLoad: false })
       }
     }
     buildingOpts.value = opts
@@ -127,6 +130,68 @@ async function confirmNew() {
     router.push(`/projects/${projectId.value}/system-schemes/${scheme.id}`)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || t('common.error'))
+  }
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+function cloneOptional<T>(value: T | null | undefined): T | undefined {
+  return value == null ? undefined : cloneJson(value)
+}
+
+function getCopyName(name: string, existingNames: string[]): string {
+  const names = new Set(existingNames)
+  const baseName = `${name}（副本）`
+  if (!names.has(baseName)) return baseName
+  let idx = 2
+  while (names.has(`${name}（副本${idx}）`)) idx += 1
+  return `${name}（副本${idx}）`
+}
+
+function cleanCopiedSubsystems(subsystems: Subsystem[] | null | undefined): Subsystem[] {
+  return cloneJson(subsystems ?? []).map((subsystem) => {
+    delete subsystem.id
+    delete subsystem.scheme_id
+    subsystem.combos = (subsystem.combos ?? []).map((combo) => {
+      delete combo.id
+      return combo
+    })
+    subsystem.tower_groups = (subsystem.tower_groups ?? []).map((group) => {
+      delete group.id
+      return group
+    })
+    return subsystem
+  })
+}
+
+async function copyScheme(row: { id: string; name: string }, event?: MouseEvent) {
+  event?.stopPropagation()
+  if (store.items.length >= 5) {
+    ElMessage.warning(t('scheme.maxReached'))
+    return
+  }
+  if (copyingSchemes.value.has(row.id)) return
+
+  copyingSchemes.value.add(row.id)
+  try {
+    const { data: source } = await getScheme(row.id)
+    const payload: SystemSchemeCreate = {
+      name: getCopyName(source.name, store.items.map((item) => item.name)),
+      building_id: source.building_id,
+      scheme_index: store.items.length + 1,
+      safety_margin: source.safety_margin,
+      control_strategy: cloneOptional(source.control_strategy),
+      diagram_json: cloneOptional(source.diagram_json),
+      subsystems: cleanCopiedSubsystems(source.subsystems),
+    }
+    await store.add(projectId.value, payload)
+    ElMessage.success('方案已复制')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || t('common.error'))
+  } finally {
+    copyingSchemes.value.delete(row.id)
   }
 }
 
@@ -196,13 +261,6 @@ function formatNum(v: number | null | undefined): string {
   if (v === null || v === undefined) return '-'
   return v >= 1000 ? v.toFixed(0) : v.toFixed(1)
 }
-function formatCop(v: number | null | undefined): string {
-  if (v === null || v === undefined) return '-'
-  return v.toFixed(2)
-}
-function formatSafetyMargin(v: number | null | undefined): string {
-  return Number(v ?? 1.0).toFixed(2)
-}
 function coolingShort(item: { cooling_load_peak: number | null; cooling_capacity_total: number }) {
   return (
     item.cooling_load_peak !== null &&
@@ -221,6 +279,21 @@ function hasEnergyResult(item: {
   annual_energy_total: number | null
 }): boolean {
   return item.annual_energy_total !== null && item.annual_energy_total !== undefined
+}
+function buildingLabel(row: { building_name: string | null; subsystem_count: number }): string {
+  return `${row.building_name || '-'}（${row.subsystem_count}${t('scheme.subsystemUnit')}）`
+}
+function splitAnnualEnergy(
+  item: { annual_cooling_total: number | null; annual_heating_total: number | null; annual_energy_total: number | null },
+  kind: 'cooling' | 'heating',
+): number | null {
+  if (item.annual_energy_total === null || item.annual_energy_total === undefined) return null
+  const cooling = Number(item.annual_cooling_total ?? 0)
+  const heating = Number(item.annual_heating_total ?? 0)
+  const total = cooling + heating
+  if (total <= 0) return null
+  const share = kind === 'cooling' ? cooling / total : heating / total
+  return item.annual_energy_total * share
 }
 
 watch(projectId, async () => {
@@ -243,13 +316,13 @@ onMounted(async () => {
       </div>
       <div class="section-header-right">
         <el-button
-          :icon="VideoPlay"
+          :icon="StartSimulationIcon"
           :disabled="!store.items.length"
           @click="runAllEnergySim"
         >
           {{ t('scheme.runAllEnergy') }}
         </el-button>
-        <el-button type="primary" :icon="Plus" @click="openNewDialog">
+        <el-button type="primary" :icon="AddWorkspaceItemIcon" @click="openNewDialog">
           {{ t('scheme.addNew') }}
         </el-button>
       </div>
@@ -267,140 +340,71 @@ onMounted(async () => {
         @click="openScheme(row.id)"
       >
         <div class="scard-header">
+          <div class="scard-title-mark">
+            <el-icon><Tickets /></el-icon>
+          </div>
           <div class="scard-title">
-            <div class="scard-name-row">
-              <div class="scard-name-main">
-                <span class="scard-name">{{ row.name }}</span>
-                <el-tag
-                  v-if="!isMobile"
-                  :type="hasEnergyResult(row) ? 'success' : 'info'"
-                  size="small"
-                  effect="light"
-                >
-                  {{ hasEnergyResult(row) ? t('scheme.hasEnergyResult') : t('scheme.noEnergyResult') }}
-                </el-tag>
-              </div>
-              <div class="scard-card-actions" @click.stop>
-                <el-button
-                  type="primary"
-                  :icon="Edit"
-                  size="small"
-                  text
-                  @click="openEditDialog(row, $event)"
-                  :title="t('common.edit') || '编辑'"
-                />
-                <el-button
-                  type="danger"
-                  :icon="Delete"
-                  size="small"
-                  text
-                  @click.stop="removeOne(row.id, row.name)"
-                  :title="t('common.delete')"
-                />
-              </div>
+            <div class="scard-name-main">
+              <span class="scard-name">{{ row.name }}</span>
+              <span class="scard-building">{{ buildingLabel(row) }}</span>
             </div>
-            <div class="scard-meta">
-              <span class="meta-pill meta-pill--bldg">
-                <el-icon class="meta-pill-icon"><OfficeBuilding /></el-icon>
-                <span class="meta-pill-value">{{ row.building_name || '-' }}</span>
-              </span>
-              <span class="meta-pill">
-                <el-icon class="meta-pill-icon"><Setting /></el-icon>
-                <span class="meta-pill-value">{{ row.subsystem_count }}</span>
-                <span class="meta-pill-unit">{{ t('scheme.subsystemUnit') }}</span>
-              </span>
-              <span class="meta-pill meta-pill--safety" @click.stop>
-                <span class="meta-pill-unit">{{ t('scheme.strategy.safetyMargin') }}</span>
-                <span class="meta-pill-value">{{ formatSafetyMargin(row.safety_margin) }}</span>
-              </span>
-            </div>
+          </div>
+          <div class="scard-card-actions" @click.stop>
+            <el-button
+              type="primary"
+              :icon="CopyDocument"
+              size="small"
+              text
+              :loading="copyingSchemes.has(row.id)"
+              @click="copyScheme(row, $event)"
+              title="复制方案"
+            />
+            <el-button
+              type="primary"
+              :icon="Edit"
+              size="small"
+              text
+              @click="openEditDialog(row, $event)"
+              :title="t('common.edit') || '编辑'"
+            />
+            <el-button
+              type="danger"
+              :icon="Delete"
+              size="small"
+              text
+              @click.stop="removeOne(row.id, row.name)"
+              :title="t('common.delete')"
+            />
           </div>
         </div>
 
-        <div class="scard-stats">
-          <!-- 1. 冷负荷峰值 -->
-          <div class="stat-item stat-cool">
-            <span class="stat-tag stat-tag--cool">制<wbr />冷</span>
-            <span class="stat-name">负荷<wbr />峰值</span>
-            <div class="stat-value">
-              <span class="stat-num">{{ formatNum(row.cooling_load_peak) }}</span>
-              <span class="stat-unit">kW</span>
+        <div class="scard-metric-panels">
+          <div class="metric-panel metric-panel--cool" :class="{ 'metric-panel--short': coolingShort(row) }">
+            <div class="metric-panel-title">
+              <span class="metric-panel-symbol metric-panel-symbol--snow" aria-hidden="true">❄</span>
+              <span>制冷</span>
             </div>
+            <div class="metric-row"><span>峰值负荷</span><strong>{{ formatNum(row.cooling_load_peak) }} <em>kW</em></strong></div>
+            <div class="metric-row"><span>装机容量</span><strong>{{ formatNum(row.cooling_capacity_total) }} <em>kW</em></strong></div>
+            <div class="metric-row"><span>累计制冷量</span><strong>{{ formatNum(row.annual_cooling_total) }} <em>kWh</em></strong></div>
+            <div class="metric-row"><span>耗电量</span><strong>{{ formatNum(splitAnnualEnergy(row, 'cooling')) }} <em>kWh</em></strong></div>
           </div>
-          <!-- 2. 热负荷峰值 -->
-          <div class="stat-item stat-heat">
-            <span class="stat-tag stat-tag--heat">制<wbr />热</span>
-            <span class="stat-name">负荷<wbr />峰值</span>
-            <div class="stat-value">
-              <span class="stat-num">{{ formatNum(row.heating_load_peak) }}</span>
-              <span class="stat-unit">kW</span>
+          <div class="metric-panel metric-panel--heat" :class="{ 'metric-panel--short': heatingShort(row) }">
+            <div class="metric-panel-title">
+              <span class="metric-panel-symbol"><el-icon><Sunny /></el-icon></span>
+              <span>制热</span>
             </div>
-          </div>
-          <!-- 3. 装机容量（制冷） -->
-          <div
-            class="stat-item stat-cool-soft"
-            :class="{ 'stat-short': coolingShort(row) }"
-          >
-            <span class="stat-tag stat-tag--cool">制<wbr />冷</span>
-            <span class="stat-name">装机<wbr />容量</span>
-            <div class="stat-value">
-              <span class="stat-num">{{ formatNum(row.cooling_capacity_total) }}</span>
-              <span class="stat-unit">kW</span>
-            </div>
-          </div>
-          <!-- 4. 装机容量（制热） -->
-          <div
-            class="stat-item stat-heat-soft"
-            :class="{ 'stat-short': heatingShort(row) }"
-          >
-            <span class="stat-tag stat-tag--heat">制<wbr />热</span>
-            <span class="stat-name">装机<wbr />容量</span>
-            <div class="stat-value">
-              <span class="stat-num">{{ formatNum(row.heating_capacity_total) }}</span>
-              <span class="stat-unit">kW</span>
-            </div>
-          </div>
-          <!-- 5. 累计制冷量 -->
-          <div class="stat-item stat-energy">
-            <span class="stat-tag stat-tag--cool">制<wbr />冷</span>
-            <span class="stat-name">年<wbr />累计</span>
-            <div class="stat-value">
-              <span class="stat-num">{{ formatNum(row.annual_cooling_total) }}</span>
-              <span class="stat-unit">kWh</span>
-            </div>
-          </div>
-          <!-- 6. 累计制热量 -->
-          <div class="stat-item stat-energy">
-            <span class="stat-tag stat-tag--heat">制<wbr />热</span>
-            <span class="stat-name">年<wbr />累计</span>
-            <div class="stat-value">
-              <span class="stat-num">{{ formatNum(row.annual_heating_total) }}</span>
-              <span class="stat-unit">kWh</span>
-            </div>
-          </div>
-          <!-- 7. 系统能耗 -->
-          <div class="stat-item stat-energy">
-            <span class="stat-tag stat-tag--sys">系<wbr />统</span>
-            <span class="stat-name">年<wbr />能耗</span>
-            <div class="stat-value">
-              <span class="stat-num">{{ formatNum(row.annual_energy_total) }}</span>
-              <span class="stat-unit">kWh</span>
-            </div>
-          </div>
-          <!-- 8. 系统能效 -->
-          <div class="stat-item stat-cop">
-            <span class="stat-tag stat-tag--sys">系<wbr />统</span>
-            <span class="stat-name">能效<wbr />比</span>
-            <div class="stat-value">
-              <span class="stat-num">{{ formatCop(row.system_cop) }}</span>
-            </div>
+            <div class="metric-row"><span>峰值负荷</span><strong>{{ formatNum(row.heating_load_peak) }} <em>kW</em></strong></div>
+            <div class="metric-row"><span>装机容量</span><strong>{{ formatNum(row.heating_capacity_total) }} <em>kW</em></strong></div>
+            <div class="metric-row"><span>累计制热量</span><strong>{{ formatNum(row.annual_heating_total) }} <em>kWh</em></strong></div>
+            <div class="metric-row"><span>耗电量</span><strong>{{ formatNum(splitAnnualEnergy(row, 'heating')) }} <em>kWh</em></strong></div>
           </div>
         </div>
 
         <div v-if="!isMobile" class="scard-actions" @click.stop>
           <el-button
             size="small"
-            :icon="VideoPlay"
+            :icon="StartSimulationIcon"
             :loading="runningIds.has(row.id)"
             @click.stop="runEnergySim(row.id)"
           >
@@ -417,33 +421,38 @@ onMounted(async () => {
       v-if="!store.loadingList && !store.items.length"
       :description="t('scheme.noSchemeYet')"
     >
-      <el-button type="primary" :icon="Plus" @click="openNewDialog">
+      <el-button type="primary" :icon="AddWorkspaceItemIcon" @click="openNewDialog">
         {{ t('scheme.addNew') }}
       </el-button>
     </el-empty>
 
-    <!-- 移动端底部固定主操作栏 -->
-    <div v-if="isMobile" class="mobile-action-bar">
-      <el-button
-        class="mab-btn"
-        :icon="VideoPlay"
-        :disabled="!store.items.length"
-        @click="runAllEnergySim"
-      >
-        {{ t('scheme.runAllEnergy') }}
-      </el-button>
-      <el-button
-        class="mab-btn"
-        type="primary"
-        :icon="Plus"
-        @click="openNewDialog"
-      >
-        {{ t('scheme.addNew') }}
-      </el-button>
-    </div>
+    <Teleport to="body">
+      <!-- 移动端底部固定主操作栏 -->
+      <div v-if="isMobile" class="mobile-action-bar">
+        <el-button
+          class="mab-btn mab-btn--simulate"
+          :disabled="!store.items.length"
+          @click="runAllEnergySim"
+        >
+          <span class="mab-icon" aria-hidden="true">
+            <el-icon><StartSimulationIcon /></el-icon>
+          </span>
+          <span class="mab-title">仿真</span>
+        </el-button>
+        <el-button
+          class="mab-btn mab-btn--create"
+          @click="openNewDialog"
+        >
+          <span class="mab-icon" aria-hidden="true">
+            <el-icon><AddWorkspaceItemIcon /></el-icon>
+          </span>
+          <span class="mab-title">新增</span>
+        </el-button>
+      </div>
+    </Teleport>
 
     <!-- 新建对话框 -->
-    <el-dialog v-model="newDialogVisible" :title="t('scheme.addNew')" width="480px">
+    <el-dialog v-model="newDialogVisible" :title="t('scheme.addNew')" width="480px" append-to-body>
       <el-form label-width="120px">
         <el-form-item :label="t('scheme.name')" required>
           <el-input v-model="newForm.name" :placeholder="t('scheme.namePlaceholder')" />
@@ -471,7 +480,7 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editDialogVisible" title="编辑方案" width="420px">
+    <el-dialog v-model="editDialogVisible" title="编辑方案" width="420px" append-to-body>
       <el-form label-width="96px">
         <el-form-item :label="t('scheme.name')" required>
           <el-input v-model="editForm.name" :placeholder="t('scheme.namePlaceholder')" />
@@ -534,82 +543,106 @@ onMounted(async () => {
 /* ----------------- Card Grid ----------------- */
 .scheme-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
   gap: 16px;
+  min-width: 0;
 }
 
 .scard {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 18px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  gap: var(--sim-card-gap);
+  padding: var(--sim-card-padding);
+  border-radius: var(--sim-card-radius);
+  background: var(--sim-card-bg);
+  border: 1px solid var(--sim-card-border);
+  box-shadow: var(--sim-card-shadow);
   cursor: pointer;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  min-width: 0;
+  overflow: hidden;
+  transition: var(--sim-card-transition);
 }
 .scard:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 18px 36px rgba(8, 145, 178, 0.14), 0 4px 10px rgba(15, 23, 42, 0.06);
-  border-color: rgba(8, 145, 178, 0.45);
+  transform: var(--sim-card-hover-transform);
+  box-shadow: var(--sim-card-hover-shadow);
+  border-color: var(--sim-card-hover-border);
 }
-.scard--dim .scard-stats .stat-item {
-  background: #f8fafc !important;
-  border-color: #e5e7eb !important;
-  opacity: 0.72;
+.scard--dim .metric-panel {
+  background: var(--sim-metric-dim-bg);
+  opacity: 0.78;
 }
-.scard--dim .scard-stats .stat-item .stat-unit {
-  visibility: hidden;
-}
-.scard--dim .scard-stats .stat-item .stat-value {
-  color: #94a3b8;
+.scard--dim .metric-row strong {
+  color: var(--sim-metric-dim-value);
 }
 
 .scard-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: flex-start;
-  gap: 10px;
+  gap: 14px;
+  min-width: 0;
+}
+.scard-title-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: #0f766e;
+  background: linear-gradient(135deg, #ecfdf5, #f0fdfa);
+  font-size: 22px;
 }
 .scard-title {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  width: 100%;
-}
-.scard-name-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
+  flex: 1 1 0;
+  overflow: hidden;
 }
 .scard-name-main {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
   min-width: 0;
-  flex: 1;
+  width: 100%;
+  overflow: hidden;
 }
 .scard-name {
-  font-size: 17px;
-  font-weight: 700;
-  color: #0f172a;
+  display: block;
+  font-size: 16px;
+  font-weight: var(--font-weight-regular);
+  color: var(--sim-card-title);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  max-width: 100%;
+}
+.scard-building {
+  display: block;
+  font-size: 12px;
+  color: var(--sim-card-subtitle);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 .scard-card-actions {
-  flex-shrink: 0;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  margin-left: 8px;
+  margin-left: auto;
 }
 .scard-card-actions :deep(.el-button) {
-  padding: 4px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font-size: 18px;
 }
 .scard-card-actions :deep(.el-button + .el-button) {
   margin-left: 2px;
@@ -639,33 +672,13 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 11px;
-  border-radius: 999px;
+  padding: 3px 9px;
+  border-radius: 8px;
   background: #f1f5f9;
   border: 1px solid #e2e8f0;
   font-size: 12px;
   color: #475569;
   line-height: 1.2;
-}
-.meta-pill--bldg {
-  background: linear-gradient(135deg, #ecfeff, #f0f9ff);
-  border-color: rgba(8, 145, 178, 0.22);
-  color: #0e7490;
-}
-.meta-pill--safety {
-  border-radius: 999px;
-  padding: 4px 10px;
-  background: #f8fafc;
-}
-.meta-pill--safety :deep(.el-input-number) {
-  width: 92px;
-}
-.meta-pill--safety :deep(.el-input__wrapper) {
-  padding-left: 6px;
-  padding-right: 6px;
-}
-.meta-pill--safety :deep(.el-input__inner) {
-  text-align: center;
 }
 .meta-pill-icon {
   display: inline-flex;
@@ -686,108 +699,94 @@ onMounted(async () => {
   margin-left: 1px;
 }
 
-/* ----------------- Stats grid -----------------
-   每个 stat-item 拆为 [tag][name][value] 三行；
-   父级 grid 用固定行高让相邻 item 的对应行严格横向对齐；
-   tag/name 用 <wbr/> 控制只在两字处断行（不会出现"负荷峰\n值"）。 */
-.scard-stats {
+/* ----------------- Metric Panels ----------------- */
+.scard-metric-panels {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px 8px;
-  align-items: stretch;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
 }
-.stat-item {
-  display: grid;
-  /* 固定行高确保跨 item 横向对齐：tag 行 22 / name 行 36（两行） / value 行 22 */
-  grid-template-rows: 22px 36px 22px;
-  row-gap: 2px;
-  padding: 8px 6px;
-  border-radius: 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+.metric-panel {
+  padding: 10px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--sim-card-border);
   min-width: 0;
-  text-align: center;
-  /* 关闭字符级断行；仅在 <wbr/> 处可断 */
-  word-break: keep-all;
-  overflow-wrap: normal;
 }
-.stat-tag {
-  align-self: center;
-  justify-self: center;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  line-height: 1.1;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.06);
-  color: #475569;
-  white-space: normal;
-  max-width: 100%;
-  text-align: center;
+.metric-panel--cool {
+  background: var(--sim-metric-cool-bg);
+  border-color: var(--sim-metric-cool-border);
 }
-.stat-tag--cool { background: rgba(59, 130, 246, 0.12); color: #1d4ed8; }
-.stat-tag--heat { background: rgba(249, 115, 22, 0.12); color: #c2410c; }
-.stat-tag--sys  { background: rgba(99, 102, 241, 0.12); color: #4f46e5; }
-.stat-name {
-  align-self: center;
-  font-size: 12px;
-  color: #64748b;
-  line-height: 1.2;
-  white-space: normal;
-  /* 最多 2 行（行高 14.4 × 2 ≈ 29，留 36 容错） */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-align: center;
+.metric-panel--heat {
+  background: var(--sim-metric-heat-bg);
+  border-color: var(--sim-metric-heat-border);
 }
-.stat-value {
-  align-self: center;
-  font-size: 16px;
-  font-weight: 700;
-  color: #0f172a;
-  font-variant-numeric: tabular-nums;
+.metric-panel--short {
+  border-color: var(--sim-metric-short-border);
+}
+.metric-panel-title {
   display: inline-flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: 2px;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 8px;
+  color: var(--sim-card-title);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1;
   white-space: nowrap;
+}
+.metric-panel-symbol {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--sim-metric-cool-icon-color);
+  background: var(--sim-metric-cool-icon-bg);
+}
+.metric-panel-symbol--snow {
+  color: var(--sim-metric-cool-icon-color);
+  background: var(--sim-metric-cool-icon-bg);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+}
+.metric-panel--heat .metric-panel-symbol {
+  color: var(--sim-metric-heat-icon-color);
+  background: var(--sim-metric-heat-icon-bg);
+}
+.metric-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5px;
   min-width: 0;
-  line-height: 1.1;
-}
-.stat-num { overflow: hidden; text-overflow: ellipsis; }
-.stat-unit {
+  color: var(--sim-metric-text);
   font-size: 11px;
+  line-height: 1.55;
+}
+.metric-row span {
+  color: var(--sim-metric-text);
   font-weight: 500;
-  color: #94a3b8;
-  margin-left: 2px;
+  white-space: nowrap;
 }
-.stat-cool {
-  background: linear-gradient(135deg, #ecfeff 0%, #f0f9ff 100%);
+.metric-row strong {
+  min-width: 0;
+  color: var(--sim-metric-value);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.stat-heat {
-  background: linear-gradient(135deg, #fff7ed 0%, #fef2f2 100%);
-}
-.stat-cool-soft {
-  background: linear-gradient(135deg, #f0f9ff 0%, #fafbff 100%);
-}
-.stat-heat-soft {
-  background: linear-gradient(135deg, #fff7ed 0%, #fffaf5 100%);
-}
-.stat-energy {
-  background: linear-gradient(135deg, #f5f3ff 0%, #faf5ff 100%);
-}
-.stat-cop {
-  background: linear-gradient(135deg, #f0fdfa 0%, #ecfeff 100%);
-}
-.stat-short {
-  border-color: #fca5a5;
-  background: #fef2f2;
-}
-.stat-short .stat-value {
-  color: #dc2626;
+.metric-row em {
+  color: var(--sim-metric-unit);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 500;
 }
 
 /* ----------------- Actions ----------------- */
@@ -806,42 +805,49 @@ onMounted(async () => {
 
 /* ----------------- Mobile ----------------- */
 @media (max-width: 768px) {
-  .scheme-list-view { gap: 12px; padding-bottom: 84px; }
+  .scheme-list-view { gap: 12px; padding: 0 12px 12px; }
   .scheme-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
+    min-width: 0;
   }
-  .scard { padding: 14px; gap: 10px; }
+  .scard {
+    min-width: 0;
+    padding: var(--sim-card-mobile-padding);
+    gap: var(--sim-card-mobile-gap);
+    border-radius: var(--sim-card-radius);
+    overflow: hidden;
+    background: var(--sim-card-bg);
+    border-color: var(--sim-card-border);
+    box-shadow: var(--sim-card-shadow);
+  }
+  .scard-header { gap: 12px; }
+  .scard-title-mark { width: 38px; height: 38px; font-size: 20px; }
   .scard-name { font-size: 16px; }
-  .scard-name-main {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 4px;
-  }
   .scard-card-actions { margin-left: 4px; }
-  .scard-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 8px; }
-  .stat-item { padding: 6px 4px; }
-  .stat-tag { font-size: 10.5px; padding: 1px 5px; }
-  .stat-name { font-size: 11px; }
-  .stat-value { font-size: 14px; }
-  .mobile-action-bar {
-    position: fixed;
-    left: 12px;
-    right: 12px;
-    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
-    display: flex;
-    gap: 10px;
-    z-index: 90;
-    pointer-events: none;
+  .scard-metric-panels { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .metric-panel { padding: 10px 8px; }
+  .metric-panel-title {
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 5px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1;
   }
-  .mobile-action-bar .mab-btn {
-    flex: 1;
-    pointer-events: auto;
-    height: 48px;
-    border-radius: 12px;
-    font-size: 15px;
-    font-weight: 600;
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+  .metric-panel-symbol {
+    width: 20px;
+    height: 20px;
+    font-size: 12px;
   }
+  .metric-row {
+    gap: 5px;
+    font-size: 11px;
+    line-height: 1.55;
+  }
+  .metric-row span { font-weight: 500; }
+  .metric-row strong { font-size: 12px; font-weight: 600; }
+  .metric-row em { font-size: 10px; }
 }
 </style>
