@@ -33,19 +33,19 @@ const pipeSystem = computed(() => (params.value.pipe_system as string) || 'two_p
     <!-- 制冷机房 -->
     <template v-if="schemeType === 'chiller_plant'">
       <el-row :gutter="8" class="dp-grid scheme-field-grid">
-        <el-col :span="8"><el-form-item :label="t('scheme.designParams.chwSupplyTemp')">
+        <el-col :span="8" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.chwSupplyTemp')">
           <NumberInput :model-value="(params.chw_supply_temp as number) ?? 7" :min="1" :max="25" :precision="1" @update:model-value="(v) => update('chw_supply_temp', v)" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item :label="t('scheme.designParams.chwDeltaTemp')">
+        <el-col :span="8" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.chwDeltaTemp')">
           <NumberInput :model-value="(params.chw_delta_temp as number) ?? 5" :min="1" :max="15" :precision="1" @update:model-value="(v) => update('chw_delta_temp', v)" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item :label="t('scheme.designParams.chwPumpHead')">
+        <el-col :span="8" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.chwPumpHead')">
           <NumberInput :model-value="(params.chw_pump_head as number) ?? 35" :min="1" :max="100" :precision="1" @update:model-value="(v) => update('chw_pump_head', v)" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item :label="t('scheme.designParams.headerPressureDrop')">
+        <el-col :span="8" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.headerPressureDrop')">
           <NumberInput :model-value="(params.header_pressure_drop as number) ?? 21" :min="1" :max="100" :precision="1" @update:model-value="(v) => update('header_pressure_drop', v)" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item :label="t('scheme.designParams.cwSupplyTemp')">
+        <el-col :span="8" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.cwSupplyTemp')">
           <NumberInput :model-value="(params.cw_supply_temp as number) ?? 30" :min="1" :max="50" :precision="1" @update:model-value="(v) => update('cw_supply_temp', v)" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item :label="t('scheme.designParams.cwDeltaTemp')">
+        <el-col :span="8" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.cwDeltaTemp')">
           <NumberInput :model-value="(params.cw_delta_temp as number) ?? 5" :min="1" :max="15" :precision="1" @update:model-value="(v) => update('cw_delta_temp', v)" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item :label="t('scheme.designParams.cwPumpHead')">
+        <el-col :span="8" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.cwPumpHead')">
           <NumberInput :model-value="(params.cw_pump_head as number) ?? 30" :min="1" :max="100" :precision="1" @update:model-value="(v) => update('cw_pump_head', v)" /></el-form-item></el-col>
       </el-row>
     </template>
@@ -53,38 +53,38 @@ const pipeSystem = computed(() => (params.value.pipe_system as string) || 'two_p
     <!-- 风冷模块 -->
     <template v-else-if="schemeType === 'air_cooled'">
       <el-row :gutter="8" class="dp-grid dp-grid--air scheme-field-grid">
-        <el-col :span="6"><el-form-item :label="t('scheme.designParams.coolingSupplyTemp')">
+        <el-col :span="6" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.coolingSupplyTemp')">
           <NumberInput :model-value="(params.cooling_supply_temp as number) ?? 7" :min="1" :max="25" :precision="1" @update:model-value="(v) => update('cooling_supply_temp', v)" /></el-form-item></el-col>
-        <el-col :span="6"><el-form-item :label="t('scheme.designParams.coolingDeltaTemp')">
+        <el-col :span="6" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.coolingDeltaTemp')">
           <NumberInput :model-value="(params.cooling_delta_temp as number) ?? 5" :min="1" :max="15" :precision="1" @update:model-value="(v) => update('cooling_delta_temp', v)" /></el-form-item></el-col>
-        <el-col :span="6"><el-form-item :label="t('scheme.designParams.heatingSupplyTemp')">
+        <el-col :span="6" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.heatingSupplyTemp')">
           <NumberInput :model-value="(params.heating_supply_temp as number) ?? 45" :min="30" :max="100" :precision="1" @update:model-value="(v) => update('heating_supply_temp', v)" /></el-form-item></el-col>
-        <el-col :span="6"><el-form-item :label="t('scheme.designParams.heatingDeltaTemp')">
+        <el-col :span="6" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.heatingDeltaTemp')">
           <NumberInput :model-value="(params.heating_delta_temp as number) ?? 5" :min="1" :max="15" :precision="1" @update:model-value="(v) => update('heating_delta_temp', v)" /></el-form-item></el-col>
-        <el-col :span="12"><el-form-item class="scheme-field-item--auto" :label="t('scheme.designParams.pipeSystem')">
-          <el-radio-group :model-value="pipeSystem" @update:model-value="(v) => update('pipe_system', v)">
-            <el-radio-button value="two_pipe">{{ t('scheme.designParams.twoPipe') }}</el-radio-button>
-            <el-radio-button value="four_pipe">{{ t('scheme.designParams.fourPipe') }}</el-radio-button>
+        <el-col :span="12" class="scheme-field-col scheme-field-col--radio"><el-form-item class="scheme-field-item--auto" :label="t('scheme.designParams.pipeSystem')">
+          <el-radio-group :model-value="pipeSystem" size="small" @update:model-value="(v) => update('pipe_system', v)">
+            <el-radio value="two_pipe">{{ t('scheme.designParams.twoPipe') }}</el-radio>
+            <el-radio value="four_pipe">{{ t('scheme.designParams.fourPipe') }}</el-radio>
           </el-radio-group>
         </el-form-item></el-col>
       </el-row>
       <template v-if="pipeSystem === 'two_pipe'">
         <el-row :gutter="8" class="dp-grid scheme-field-grid">
-          <el-col :span="8"><el-form-item :label="t('scheme.designParams.pumpHead')">
+          <el-col :span="8" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.pumpHead')">
             <NumberInput :model-value="(params.pump_head as number) ?? 35" :min="1" :max="100" :precision="1" @update:model-value="(v) => update('pump_head', v)" /></el-form-item></el-col>
-          <el-col :span="8"><el-form-item :label="t('scheme.designParams.headerPressureDrop')">
+          <el-col :span="8" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.headerPressureDrop')">
             <NumberInput :model-value="(params.header_pressure_drop as number) ?? 21" :min="1" :max="100" :precision="1" @update:model-value="(v) => update('header_pressure_drop', v)" /></el-form-item></el-col>
         </el-row>
       </template>
       <template v-else>
         <el-row :gutter="8" class="dp-grid dp-grid--air scheme-field-grid">
-          <el-col :span="6"><el-form-item :label="t('scheme.designParams.chwPumpHeadFour')">
+          <el-col :span="6" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.chwPumpHeadFour')">
             <NumberInput :model-value="(params.chw_pump_head as number) ?? 35" :min="1" :max="100" :precision="1" @update:model-value="(v) => update('chw_pump_head', v)" /></el-form-item></el-col>
-          <el-col :span="6"><el-form-item :label="t('scheme.designParams.chwHeader')">
+          <el-col :span="6" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.chwHeader')">
             <NumberInput :model-value="(params.chw_header_pressure_drop as number) ?? 21" :min="1" :max="100" :precision="1" @update:model-value="(v) => update('chw_header_pressure_drop', v)" /></el-form-item></el-col>
-          <el-col :span="6"><el-form-item :label="t('scheme.designParams.hwPumpHead')">
+          <el-col :span="6" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.hwPumpHead')">
             <NumberInput :model-value="(params.hw_pump_head as number) ?? 35" :min="1" :max="100" :precision="1" @update:model-value="(v) => update('hw_pump_head', v)" /></el-form-item></el-col>
-          <el-col :span="6"><el-form-item :label="t('scheme.designParams.hwHeader')">
+          <el-col :span="6" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.hwHeader')">
             <NumberInput :model-value="(params.hw_header_pressure_drop as number) ?? 21" :min="1" :max="100" :precision="1" @update:model-value="(v) => update('hw_header_pressure_drop', v)" /></el-form-item></el-col>
         </el-row>
       </template>

@@ -291,7 +291,7 @@ onBeforeUnmount(() => {
       <template v-else>
       <!-- 冷机 / 风冷模块 输入行 -->
       <el-row :gutter="8" class="combo-row scheme-field-grid">
-        <el-col :span="10">
+        <el-col :span="10" class="scheme-field-col--picker">
           <el-form-item class="combo-picker-item" :label="isAirCooled ? t('scheme.combo.moduleModel') : t('scheme.combo.chillerModel')">
             <EquipmentPicker
               :model-value="combo.primary_model_id ?? null"
@@ -301,10 +301,10 @@ onBeforeUnmount(() => {
             />
           </el-form-item>
         </el-col>
-        <el-col :span="4"><el-form-item :label="isAirCooled ? t('scheme.combo.moduleCountPerGroup') : t('scheme.combo.chillerCount')">
+        <el-col :span="4" class="scheme-field-col--number"><el-form-item :label="isAirCooled ? t('scheme.combo.moduleCountPerGroup') : t('scheme.combo.chillerCount')">
           <NumberInput v-model="combo.primary_count" :min="1" :max="20" />
         </el-form-item></el-col>
-        <el-col v-if="isAirCooled" :span="4"><el-form-item :label="t('scheme.combo.groupCount')">
+        <el-col v-if="isAirCooled" :span="4" class="scheme-field-col--number"><el-form-item :label="t('scheme.combo.groupCount')">
           <NumberInput v-model="combo.group_count" :min="1" :max="10" /></el-form-item></el-col>
       </el-row>
 
@@ -325,7 +325,7 @@ onBeforeUnmount(() => {
 
       <!-- 冷冻水泵 输入行 -->
       <el-row :gutter="8" class="combo-row scheme-field-grid">
-        <el-col :span="10">
+        <el-col :span="10" class="scheme-field-col--picker">
           <el-form-item class="combo-picker-item" :label="isAirCooled && !isFourPipe ? t('scheme.combo.pumpModel') : t('scheme.combo.chwPumpModel')">
             <EquipmentPicker
               :model-value="combo.chw_pump_model_id ?? null"
@@ -335,12 +335,12 @@ onBeforeUnmount(() => {
             />
           </el-form-item>
         </el-col>
-        <el-col :span="4"><el-form-item :label="isAirCooled && !isFourPipe ? t('scheme.combo.pumpCount') : t('scheme.combo.chwPumpCount')">
+        <el-col :span="4" class="scheme-field-col--number"><el-form-item :label="isAirCooled && !isFourPipe ? t('scheme.combo.pumpCount') : t('scheme.combo.chwPumpCount')">
           <NumberInput v-model="combo.chw_pump_count" :min="1" :max="20" />
         </el-form-item></el-col>
-        <el-col :span="4"><el-form-item :label="isAirCooled && !isFourPipe ? t('scheme.combo.pumpBackup') : t('scheme.combo.chwBackup')">
+        <el-col :span="4" class="scheme-field-col--number"><el-form-item :label="isAirCooled && !isFourPipe ? t('scheme.combo.pumpBackup') : t('scheme.combo.chwBackup')">
           <NumberInput v-model="combo.chw_pump_backup" :min="0" :max="1" /></el-form-item></el-col>
-        <el-col :span="6"><el-form-item class="scheme-field-item--auto" :label="t('scheme.combo.connection')">
+        <el-col :span="6" class="scheme-field-col--radio"><el-form-item class="scheme-field-item--auto" :label="t('scheme.combo.connection')">
           <el-radio-group v-model="combo.chw_connection" size="small">
             <el-radio value="direct">{{ t('scheme.combo.direct') }}</el-radio>
             <el-radio value="parallel">{{ t('scheme.combo.parallel') }}</el-radio>
@@ -362,7 +362,7 @@ onBeforeUnmount(() => {
       <!-- Second pump row: 制冷机房 always shows; 风冷模块仅在四管制时显示 -->
       <template v-if="schemeType === 'chiller_plant' || isFourPipe">
         <el-row :gutter="8" class="combo-row scheme-field-grid">
-          <el-col :span="10">
+          <el-col :span="10" class="scheme-field-col--picker">
             <el-form-item class="combo-picker-item" :label="isAirCooled ? t('scheme.combo.hwPumpModel') : t('scheme.combo.cwPumpModel')">
               <EquipmentPicker
                 :model-value="combo.cw_pump_model_id ?? null"
@@ -372,12 +372,12 @@ onBeforeUnmount(() => {
               />
             </el-form-item>
           </el-col>
-          <el-col :span="4"><el-form-item :label="t('scheme.combo.cwPumpCount')">
+          <el-col :span="4" class="scheme-field-col--number"><el-form-item :label="t('scheme.combo.cwPumpCount')">
             <NumberInput v-model="combo.cw_pump_count" :min="1" :max="20" />
           </el-form-item></el-col>
-          <el-col :span="4"><el-form-item :label="t('scheme.combo.cwBackup')">
+          <el-col :span="4" class="scheme-field-col--number"><el-form-item :label="t('scheme.combo.cwBackup')">
             <NumberInput v-model="combo.cw_pump_backup" :min="0" :max="1" /></el-form-item></el-col>
-          <el-col :span="6"><el-form-item class="scheme-field-item--auto" :label="t('scheme.combo.connection')">
+          <el-col :span="6" class="scheme-field-col--radio"><el-form-item class="scheme-field-item--auto" :label="t('scheme.combo.connection')">
             <el-radio-group v-model="combo.cw_connection" size="small">
               <el-radio value="direct">{{ t('scheme.combo.direct') }}</el-radio>
               <el-radio value="parallel">{{ t('scheme.combo.parallel') }}</el-radio>

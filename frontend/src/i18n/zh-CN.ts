@@ -808,9 +808,9 @@ export default {
       fourPipe: '四管制',
       pumpHead: '水泵扬程(mH₂O)',
       chwPumpHeadFour: '冷水泵扬程(mH₂O)',
-      chwHeader: '制冷总管末端侧扬程(mH₂O)',
+      chwHeader: '制冷末端侧扬程(mH₂O)',
       hwPumpHead: '热水泵扬程(mH₂O)',
-      hwHeader: '制热总管末端侧扬程(mH₂O)',
+      hwHeader: '制热末端侧扬程(mH₂O)',
     },
     combo: {
       title: '冷机-水泵选型',

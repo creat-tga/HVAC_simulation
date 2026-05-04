@@ -1135,6 +1135,8 @@ const capacityShortMessage = computed(() => {
   margin: 0 0 6px 0 !important;
 }
 .ssd-body :deep(.scheme-field-grid .el-form-item__label) {
+  display: flex;
+  align-items: center;
   height: var(--scheme-control-height);
   min-height: var(--scheme-control-height);
   padding: 0 !important;
@@ -1248,13 +1250,22 @@ const capacityShortMessage = computed(() => {
     height: auto;
     min-height: 100%;
     /* sticky 顶栏 + 内容自然排列，不需要 padding-top 占位 */
-    padding: 0 4px 12px;
+    padding: 0 4px calc(112px + env(safe-area-inset-bottom, 0px));
+  }
+  .ssd-page::after {
+    content: '';
+    display: block;
+    flex: 0 0 auto;
+    height: calc(60px + env(safe-area-inset-bottom, 0px));
   }
   .ssd-body {
+    border-color: transparent !important;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
     overflow: visible;
     flex: 0 0 auto;
     min-height: 0;
-    border-radius: 8px;
   }
 }
 

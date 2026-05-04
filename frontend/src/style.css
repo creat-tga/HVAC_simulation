@@ -168,13 +168,19 @@
 
   /* ---- Scheme editor field layout ---- */
   --scheme-field-width: 280px;
-  --scheme-control-width: 150px;
+  --scheme-control-width: 180px;
   --scheme-control-height: 24px;
+  --scheme-control-right-gap: 20px;
   --scheme-field-gap: 6px;
   --scheme-field-row-gap: 4px;
   --scheme-field-column-gap: 12px;
+  --scheme-field-column-min: 340px;
+  --scheme-field-picker-column-min: 340px;
+  --scheme-field-number-column-min: 340px;
+  --scheme-field-radio-column-min: 340px;
   --scheme-label-font-size: 12px;
   --scheme-control-font-size: 13px;
+  --scheme-mobile-control-width: 148px;
 
   /* ---- Building/Scheme metric cards ---- */
   --sim-card-bg: #ffffff;
@@ -236,13 +242,59 @@
 .scheme-field-grid {
   width: auto !important;
   max-width: none;
-  height: var(--scheme-control-height);
-  min-height: var(--scheme-control-height);
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  row-gap: var(--scheme-field-row-gap);
   line-height: 1.25;
-  margin: 0 !important;
+  margin: 0 0 var(--scheme-field-row-gap) !important;
   padding: 0 !important;
   color: var(--text-secondary);
   font-size: var(--scheme-label-font-size);
+}
+
+.scheme-field-grid > .el-col {
+  flex: 0 1 var(--scheme-field-column-min) !important;
+  width: auto !important;
+  max-width: 100% !important;
+}
+
+.scheme-field-grid > .scheme-field-col--picker {
+  --scheme-field-column-min: var(--scheme-field-picker-column-min);
+}
+
+.scheme-field-grid > .scheme-field-col--number {
+  --scheme-field-column-min: var(--scheme-field-number-column-min);
+}
+
+.scheme-field-grid > .scheme-field-col--radio {
+  --scheme-field-column-min: var(--scheme-field-radio-column-min);
+}
+
+.dp-grid.scheme-field-grid > .scheme-field-col {
+  --scheme-field-column-min: 340px;
+}
+
+.dp-grid--air.scheme-field-grid > .scheme-field-col {
+  --scheme-field-column-min: 340px;
+}
+
+.scheme-field-grid .el-form-item {
+  display: flex !important;
+  align-items: center;
+  gap: var(--scheme-field-gap);
+  width: 100%;
+  min-height: var(--scheme-control-height);
+}
+
+.scheme-field-grid .el-form-item__label {
+  flex: 1 1 auto;
+  width: auto !important;
+  min-width: 0;
+  margin: 0 !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .scheme-field-grid .el-form-item__content {
@@ -252,6 +304,7 @@
   justify-content: flex-end;
   min-width: 0;
   line-height: 1;
+  padding-right: var(--scheme-control-right-gap);
   margin: 0 !important;
 }
 
@@ -273,10 +326,50 @@
 }
 
 @media (max-width: 640px) {
+  .scheme-field-grid {
+    --scheme-control-right-gap: 0px;
+  }
+
   .scheme-field-grid > .el-col {
     flex: 0 0 100% !important;
     width: 100% !important;
     max-width: 100% !important;
+  }
+
+  .scheme-field-grid .el-form-item {
+    flex-direction: row !important;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .scheme-field-grid .el-form-item__label {
+    flex: 1 1 auto;
+    max-width: calc(100% - var(--scheme-mobile-control-width) - 8px);
+    height: var(--scheme-control-height);
+    min-height: var(--scheme-control-height);
+    line-height: var(--scheme-control-height);
+    padding: 0 !important;
+  }
+
+  .scheme-field-grid .el-form-item__content {
+    flex: 0 0 var(--scheme-mobile-control-width);
+    width: var(--scheme-mobile-control-width);
+    max-width: var(--scheme-mobile-control-width);
+  }
+
+  .scheme-field-grid .scheme-field-item--auto .el-form-item__content {
+    flex-basis: auto;
+    width: auto;
+    max-width: none;
+  }
+
+  .scheme-field-grid .num-input,
+  .scheme-field-grid .el-input-number,
+  .scheme-field-grid .eq-picker-select {
+    width: var(--scheme-mobile-control-width) !important;
+    max-width: var(--scheme-mobile-control-width);
   }
 
   .scheme-field-grid .el-form-item,

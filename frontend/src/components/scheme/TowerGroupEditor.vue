@@ -143,7 +143,7 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
         class="tower-issue"
       />
       <el-row :gutter="8" align="middle" class="tower-edit-row scheme-field-grid">
-        <el-col :span="10"><el-form-item :label="t('scheme.tower.model')">
+        <el-col :span="10" class="scheme-field-col--picker"><el-form-item :label="t('scheme.tower.model')">
           <EquipmentPicker
             :model-value="g.tower_model_id ?? null"
             equipment-type="cooling_tower"
@@ -151,7 +151,7 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
             @pick="onPicked"
           />
         </el-form-item></el-col>
-        <el-col :span="4"><el-form-item :label="t('scheme.tower.count')">
+        <el-col :span="4" class="scheme-field-col--number"><el-form-item :label="t('scheme.tower.count')">
           <NumberInput v-model="g.count" :min="1" :max="20" /></el-form-item></el-col>
       </el-row>
 

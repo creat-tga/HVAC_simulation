@@ -481,7 +481,7 @@ function toggleSidebar() {
   .ws-content {
     position: relative;
     z-index: 0;
-    padding: 10px 0 calc(64px + env(safe-area-inset-bottom, 0px));
+    padding: 10px 0 calc(60px + env(safe-area-inset-bottom, 0px));
     margin: 0;
     overflow-y: auto;
     overflow-x: hidden;
@@ -489,10 +489,16 @@ function toggleSidebar() {
     display: flex;
     flex-direction: column;
     scrollbar-gutter: stable;
+    scroll-padding-bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-y: contain;
     touch-action: pan-y;
     scroll-behavior: auto;
+  }
+  .ws-content::after {
+    content: '';
+    display: block;
+    flex: 0 0 calc(0px + env(safe-area-inset-bottom, 0px));
   }
   .ws-main :deep(.top-bar),
   #ws-mobile-topbar-slot {
