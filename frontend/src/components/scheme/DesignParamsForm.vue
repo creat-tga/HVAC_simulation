@@ -97,15 +97,38 @@ const pipeSystem = computed(() => (params.value.pipe_system as string) || 'two_p
 </template>
 
 <style scoped>
-.dp-card { border-radius: 8px; }
-.dp-title { font-weight: 600; font-size: 14px; color: var(--text-primary); }
-.dp-card :deep(.el-card__header) { padding: 8px 10px; }
-.dp-card :deep(.el-card__body) { padding: 8px 10px; }
+.dp-card {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent;
+  box-shadow: none !important;
+  overflow: visible;
+}
+.dp-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.dp-title::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: #2563eb;
+}
+.dp-card :deep(.el-card__header) {
+  padding: 0 0 8px;
+  border-bottom: 0;
+}
+.dp-card :deep(.el-card__body) { padding: 8px 0 0; }
 :deep(.el-radio-group) { flex-wrap: nowrap; }
 :deep(.el-radio-button__inner) { padding: 5px 10px; }
 
 @media (max-width: 640px) {
-  .dp-card :deep(.el-card__body) { padding: 7px 8px; }
+  .dp-card :deep(.el-card__body) { padding: 6px 0 0; }
 }
 
 </style>

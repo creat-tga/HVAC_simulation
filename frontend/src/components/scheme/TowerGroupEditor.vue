@@ -204,17 +204,45 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
 </template>
 
 <style scoped>
-.tower-card { border-radius: 8px; }
-.tower-card :deep(.el-card__header) { padding: 8px 10px; }
-.tower-card :deep(.el-card__body) { padding: 8px 10px 10px; }
+.tower-card {
+  border: 0 !important;
+  border-top: 1px solid var(--border-subtle) !important;
+  border-radius: 0 !important;
+  background: transparent;
+  box-shadow: none !important;
+  overflow: visible;
+  padding-top: 14px;
+}
+.tower-card :deep(.el-card__header) {
+  padding: 0 0 8px;
+  border-bottom: 0;
+}
+.tower-card :deep(.el-card__body) { padding: 8px 0 0; }
 .tower-head { display: flex; justify-content: space-between; align-items: center; }
 .tower-head-actions { display: flex; align-items: center; gap: 6px; }
-.tower-title { font-weight: 600; font-size: 14px; color: var(--text-primary); }
+.tower-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.tower-title::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: #c2410c;
+}
 .tower-row {
   padding: 8px 0;
-  border-bottom: 1px solid var(--border-subtle);
 }
-.tower-row:last-of-type { border-bottom: 0; }
+.tower-row + .tower-row {
+  margin-top: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
 .tower-block-head {
   display: flex;
   justify-content: space-between;
@@ -306,7 +334,10 @@ function unitVal(total: number | undefined | null, count: number | undefined | n
 }
 
 @media (max-width: 640px) {
-  .tower-card :deep(.el-card__body) { padding: 8px; }
+  .tower-card {
+    padding-top: 12px;
+  }
+  .tower-card :deep(.el-card__body) { padding: 6px 0 0; }
   .tower-head {
     align-items: flex-start;
     flex-direction: column;

@@ -398,7 +398,6 @@ onBeforeUnmount(() => {
       </template>
       </template>
 
-      <el-divider v-if="idx < renderedCombos.length - 1" />
     </div>
     </template>
 
@@ -436,16 +435,44 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.combo-card { border-radius: 8px; }
-.combo-card :deep(.el-card__header) { padding: 8px 10px; }
-.combo-card :deep(.el-card__body) { padding: 8px 10px 10px; }
+.combo-card {
+  border: 0 !important;
+  border-top: 1px solid var(--border-subtle) !important;
+  border-radius: 0 !important;
+  background: transparent;
+  box-shadow: none !important;
+  overflow: visible;
+  padding-top: 14px;
+}
+.combo-card :deep(.el-card__header) {
+  padding: 0 0 8px;
+  border-bottom: 0;
+}
+.combo-card :deep(.el-card__body) { padding: 8px 0 0; }
 .combo-head { display: flex; justify-content: space-between; align-items: center; }
-.combo-title { font-weight: 600; font-size: 14px; color: var(--text-primary); }
+.combo-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.combo-title::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: #0e7490;
+}
 .combo-block {
   padding: 8px 0;
-  border-bottom: 1px solid var(--border-subtle);
 }
-.combo-block:last-of-type { border-bottom: 0; }
+.combo-block + .combo-block {
+  margin-top: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
 .combo-block-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
 .combo-head-actions { display: flex; align-items: center; gap: 6px; }
 .combo-toggle {
@@ -547,7 +574,10 @@ onBeforeUnmount(() => {
 .device-table--warm .device-cell strong { color: #c2410c; }
 
 @media (max-width: 640px) {
-  .combo-card :deep(.el-card__body) { padding: 8px; }
+  .combo-card {
+    padding-top: 12px;
+  }
+  .combo-card :deep(.el-card__body) { padding: 6px 0 0; }
   /* 保持 展开按钮+组合名+厂家参数+删除 在同一行，只是压缩间距 */
   .combo-block-head {
     flex-wrap: nowrap;

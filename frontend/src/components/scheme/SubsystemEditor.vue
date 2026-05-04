@@ -131,7 +131,7 @@ onMounted(() => {
   display: block;
 }
 .mt {
-  margin-top: 8px;
+  margin-top: 14px;
 }
 .subsystem-issues {
   display: flex;
@@ -144,7 +144,7 @@ onMounted(() => {
 }
 
 @media (max-width: 640px) {
-  .mt { margin-top: 8px; }
+  .mt { margin-top: 12px; }
   .sub-issue-alert {
     padding: 5px 7px;
   }
