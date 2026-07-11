@@ -855,10 +855,31 @@ async def list_scheme_items(
         rows = (await db.execute(select(Building).where(Building.id.in_(bld_ids)))).scalars().all()
         bld_map = {b.id: b for b in rows}
 
+    energy_map: dict[uuid.UUID, SimulationResult] = {}
+    scheme_ids = [scheme.id for scheme in schemes]
+    if scheme_ids:
+        energy_rows = (
+            await db.execute(
+                select(SimulationResult)
+                .where(
+                    SimulationResult.scheme_id.in_(scheme_ids),
+                    SimulationResult.simulation_type == "scheme_energy",
+                    SimulationResult.status == "completed",
+                )
+                .order_by(SimulationResult.created_at.desc())
+            )
+        ).scalars().all()
+        for energy_result in energy_rows:
+            if energy_result.scheme_id is not None:
+                energy_map.setdefault(energy_result.scheme_id, energy_result)
+
     for s in schemes:
         summary = await get_scheme_summary(db, s)
         issues = await validate_scheme(db, s)
         has_err = any(i.severity == "error" for i in issues)
+        energy_result = energy_map.get(s.id)
+        delivered = float((energy_result.total_cooling_load or 0.0) + (energy_result.total_heating_load or 0.0)) if energy_result else 0.0
+        consumed = float(energy_result.total_energy or 0.0) if energy_result else 0.0
         items.append({
             "id": s.id,
             "name": s.name,
@@ -872,6 +893,11 @@ async def list_scheme_items(
             "heating_capacity_total": summary.heating_capacity_total,
             "cooling_load_peak": summary.cooling_load_peak,
             "heating_load_peak": summary.heating_load_peak,
+            "annual_cooling_total": energy_result.total_cooling_load if energy_result else None,
+            "annual_heating_total": energy_result.total_heating_load if energy_result else None,
+            "annual_energy_total": energy_result.total_energy if energy_result else None,
+            "system_cop": round(delivered / consumed, 3) if consumed > 0 else None,
+            "annual_cost": energy_result.total_cost if energy_result else None,
             "has_error": has_err,
             "updated_at": s.updated_at,
         })

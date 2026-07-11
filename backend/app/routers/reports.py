@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.routers.auth import get_current_user
 from app.schemas.simulation import EnergyReport, CostReport, CarbonReport
 from app.services import report_service
 
-router = APIRouter(prefix="/reports", tags=["报表分析"])
+router = APIRouter(prefix="/reports", tags=["报表分析"], dependencies=[Depends(get_current_user)])
 
 
 @router.get("/energy/{result_id}", response_model=EnergyReport)

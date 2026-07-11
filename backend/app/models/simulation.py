@@ -47,6 +47,9 @@ class SimulationResult(Base):
     load_result_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(), ForeignKey("simulation_results.id", ondelete="SET NULL"), nullable=True
     )
+    scheme_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(), ForeignKey("system_schemes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # --- Task tracking fields ---
     task_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)

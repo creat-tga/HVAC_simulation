@@ -13,6 +13,7 @@ from app.models.project import Project
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.library import EquipmentModelResponse
+from app.schemas.simulation import SimulationResponse
 from app.schemas.system_scheme import (
     CapacitySummary,
     SystemSchemeCreate,
@@ -23,6 +24,7 @@ from app.schemas.system_scheme import (
 )
 from app.services import library_service as lib
 from app.services import system_scheme_service as svc
+from app.services import scheme_simulation_service as simulation_svc
 
 router = APIRouter(prefix="/projects/{project_id}/system-schemes", tags=["系统方案"])
 scheme_router = APIRouter(prefix="/system-schemes", tags=["系统方案-单方案"])
@@ -131,6 +133,20 @@ async def get_summary(
     if not s:
         raise HTTPException(404, "方案不存在")
     return await svc.get_scheme_summary(db, s)
+
+
+@scheme_router.post("/{scheme_id}/energy-simulation", response_model=SimulationResponse, status_code=202)
+async def run_scheme_energy_simulation(
+    scheme_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    try:
+        return await simulation_svc.create_scheme_energy_simulation(db, scheme_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @scheme_router.post("/{scheme_id}/validate", response_model=ValidationReport)

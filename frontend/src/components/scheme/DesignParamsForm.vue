@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import NumberInput from './NumberInput.vue'
-import type { SubsystemType } from '@/types/system-scheme'
+import type { PipeSystem, SubsystemType } from '@/types/system-scheme'
 
 const { t } = useI18n()
 
@@ -21,7 +21,44 @@ function update<K extends string>(key: K, val: unknown) {
   params.value = { ...params.value, [key]: val }
 }
 
-const pipeSystem = computed(() => (params.value.pipe_system as string) || 'two_pipe')
+function numParam(source: Record<string, unknown>, key: string, fallback: number) {
+  const value = Number(source[key])
+  return Number.isFinite(value) ? value : fallback
+}
+
+function asPipeSystem(value: unknown): PipeSystem {
+  return value === 'four_pipe' ? 'four_pipe' : 'two_pipe'
+}
+
+function normalizeAirCooledParams(pipe: PipeSystem, source: Record<string, unknown>) {
+  const base = {
+    cooling_supply_temp: numParam(source, 'cooling_supply_temp', 7),
+    cooling_delta_temp: numParam(source, 'cooling_delta_temp', 5),
+    heating_supply_temp: numParam(source, 'heating_supply_temp', 45),
+    heating_delta_temp: numParam(source, 'heating_delta_temp', 5),
+    pipe_system: pipe,
+  }
+  if (pipe === 'four_pipe') {
+    return {
+      ...base,
+      chw_pump_head: numParam(source, 'chw_pump_head', 35),
+      chw_header_pressure_drop: numParam(source, 'chw_header_pressure_drop', 21),
+      hw_pump_head: numParam(source, 'hw_pump_head', 35),
+      hw_header_pressure_drop: numParam(source, 'hw_header_pressure_drop', 21),
+    }
+  }
+  return {
+    ...base,
+    pump_head: numParam(source, 'pump_head', 35),
+    header_pressure_drop: numParam(source, 'header_pressure_drop', 21),
+  }
+}
+
+function setPipeSystem(value: unknown) {
+  params.value = normalizeAirCooledParams(asPipeSystem(value), params.value)
+}
+
+const pipeSystem = computed<PipeSystem>(() => asPipeSystem(params.value.pipe_system))
 </script>
 
 <template>
@@ -62,7 +99,7 @@ const pipeSystem = computed(() => (params.value.pipe_system as string) || 'two_p
         <el-col :span="6" class="scheme-field-col"><el-form-item :label="t('scheme.designParams.heatingDeltaTemp')">
           <NumberInput :model-value="(params.heating_delta_temp as number) ?? 5" :min="1" :max="15" :precision="1" @update:model-value="(v) => update('heating_delta_temp', v)" /></el-form-item></el-col>
         <el-col :span="12" class="scheme-field-col scheme-field-col--radio"><el-form-item class="scheme-field-item--auto" :label="t('scheme.designParams.pipeSystem')">
-          <el-radio-group :model-value="pipeSystem" size="small" @update:model-value="(v) => update('pipe_system', v)">
+          <el-radio-group :model-value="pipeSystem" size="small" @update:model-value="setPipeSystem">
             <el-radio value="two_pipe">{{ t('scheme.designParams.twoPipe') }}</el-radio>
             <el-radio value="four_pipe">{{ t('scheme.designParams.fourPipe') }}</el-radio>
           </el-radio-group>

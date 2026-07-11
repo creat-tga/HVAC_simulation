@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.routers.auth import get_current_user
 from app.schemas.project import (
     ProjectCreate,
     ProjectUpdate,
@@ -13,7 +14,7 @@ from app.schemas.project import (
 )
 from app.services import project_service
 
-router = APIRouter(prefix="/projects", tags=["项目管理"])
+router = APIRouter(prefix="/projects", tags=["项目管理"], dependencies=[Depends(get_current_user)])
 
 
 @router.get("/", response_model=list[ProjectListResponse])

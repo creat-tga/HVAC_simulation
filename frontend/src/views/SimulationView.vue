@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { VideoPlay } from '@element-plus/icons-vue'
 import { useSimulationStore } from '@/stores/simulation'
 import { useTaskTrackerStore } from '@/stores/taskTracker'
-import { runEnergySimulation, cancelSimulation, getSimulationStatus } from '@/api/simulation'
+import { cancelSimulation, getSimulationStatus } from '@/api/simulation'
 import { useSimulationWs } from '@/composables/useSimulationWs'
 import SimulationProgress from '@/components/simulation/SimulationProgress.vue'
 import StepNav from '@/components/layout/StepNav.vue'
@@ -125,31 +125,8 @@ onUnmounted(() => {
 })
 
 async function handleRunSimulation() {
-  if (store.systems.length === 0) {
-    ElMessage.warning(t('system.pleaseAddSystem'))
-    return
-  }
-  if (!store.latestLoadResult) {
-    ElMessage.warning(t('simulation.energyStep.noLoadResult'))
-    return
-  }
-
-  simRunning.value = true
-  try {
-    const { data } = await runEnergySimulation(buildingId, store.latestLoadResult.id)
-    ElMessage.success(t('simulation.taskCreated'))
-    activeResultId.value = data.id
-    tracker.addTask({
-      resultId: data.id,
-      buildingId,
-      buildingName: t('simulation.energyStep.title'),
-      simulationType: 'energy',
-    })
-    startPolling()
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || t('simulation.runFailed'))
-    simRunning.value = false
-  }
+  ElMessage.info(t('simulation.useSchemeEnergy'))
+  await router.push(`/projects/${projectId}/system-schemes`)
 }
 
 async function handleCancelSimulation() {

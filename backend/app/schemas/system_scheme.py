@@ -124,7 +124,7 @@ class SystemSchemeCreate(BaseModel):
     name: str = Field(..., max_length=200)
     building_id: uuid.UUID
     scheme_index: int = Field(1, ge=1, le=5)
-    safety_margin: float = Field(1.0, ge=0, le=1.2)
+    safety_margin: float = Field(1.0, ge=0.5, le=1.2)
     control_strategy: dict[str, Any] = Field(default_factory=dict)
     diagram_json: dict[str, Any] = Field(default_factory=dict)
     subsystems: list[SubsystemCreate] = Field(default_factory=list)
@@ -134,7 +134,7 @@ class SystemSchemeUpdate(BaseModel):
     name: str | None = Field(None, max_length=200)
     building_id: uuid.UUID | None = None
     scheme_index: int | None = Field(None, ge=1, le=5)
-    safety_margin: float | None = Field(None, ge=0, le=1.2)
+    safety_margin: float | None = Field(None, ge=0.5, le=1.2)
     control_strategy: dict[str, Any] | None = None
     diagram_json: dict[str, Any] | None = None
     subsystems: list[SubsystemCreate] | None = None  # full replace

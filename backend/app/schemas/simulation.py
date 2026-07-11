@@ -50,6 +50,7 @@ class SimulationResponse(BaseModel):
     progress: int = 0
     error_message: str | None = None
     load_result_id: uuid.UUID | None = None
+    scheme_id: uuid.UUID | None = None
     total_cooling_load: float | None = None
     total_heating_load: float | None = None
     total_energy: float | None = None

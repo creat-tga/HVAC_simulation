@@ -10,6 +10,7 @@ import type {
   SystemSchemeUpdate,
   ValidationReport,
 } from '@/types/system-scheme'
+import type { SimulationResult } from '@/types/simulation'
 
 const projBase = (projectId: string) => `/projects/${projectId}/system-schemes`
 const schBase = (schemeId: string) => `/system-schemes/${schemeId}`
@@ -58,6 +59,10 @@ export interface SchemeBundle {
 
 export function getSchemeBundle(schemeId: string) {
   return api.get<SchemeBundle>(`${schBase(schemeId)}/bundle`)
+}
+
+export function runSchemeEnergySimulation(schemeId: string) {
+  return api.post<SimulationResult>(`${schBase(schemeId)}/energy-simulation`)
 }
 
 export function validateScheme(schemeId: string) {

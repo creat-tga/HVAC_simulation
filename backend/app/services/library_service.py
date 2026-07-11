@@ -648,6 +648,20 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
+def _float_list(value: Any) -> list[float]:
+    if not isinstance(value, list):
+        return []
+    result = [number for item in value if (number := _to_float(item)) is not None]
+    while len(result) > 1 and result[-1] == 0.0:
+        result.pop()
+    return result
+
+
+def _normalize_machine_type(value: Any) -> str:
+    text = str(value or "").lower()
+    return "lxj" if "离心" in text or "centrifugal" in text else "sllg"
+
+
 def _normalize_equipment_entry(eq_type: str, raw: dict[str, Any]) -> dict[str, Any] | None:
     """Convert a raw JSON entry (using user-supplied camelCase fields) into the
     internal EquipmentModel shape: {name, equipment_type, brand, model_no,
@@ -669,11 +683,16 @@ def _normalize_equipment_entry(eq_type: str, raw: dict[str, Any]) -> dict[str, A
     name: str
 
     if eq_type == "pump":
+        design_flow = _to_float(raw.get("deliveryDesign"))
         params = {
-            "flow": _to_float(raw.get("deliveryDesign")),
+            "flow": design_flow,
             "head": _to_float(raw.get("deliveryHead")),
             "power": _to_float(raw.get("powerDesign")),
             "efficiency": _to_float(raw.get("efficiency")),
+            "coe_head": _float_list(raw.get("dhFcList")),
+            "coe_power": _float_list(raw.get("dpFcList")),
+            "flux_min": 0.0,
+            "flux_max": _to_float(raw.get("deliveryMin")) or design_flow,
         }
         # Optional extras
         if raw.get("frequencyMax") is not None:
@@ -684,6 +703,7 @@ def _normalize_equipment_entry(eq_type: str, raw: dict[str, Any]) -> dict[str, A
             params["power_em"] = _to_float(raw.get("powerEm"))
         name = f"{brand or ''}{model_no}".strip() or model_no
     elif eq_type == "cooling_tower":
+        graph = _float_list(raw.get("graphList"))
         params = {
             "flow": _to_float(raw.get("delivery")),
             "head": _to_float(raw.get("deliveryHead")),
@@ -691,6 +711,12 @@ def _normalize_equipment_entry(eq_type: str, raw: dict[str, Any]) -> dict[str, A
             "inlet_temp": _to_float(raw.get("wit")),
             "outlet_temp": _to_float(raw.get("wot")),
             "wet_bulb": _to_float(raw.get("wt")),
+            "dry_bulb": _to_float(raw.get("dryBulb")) or 32.0,
+            "coe0": graph[0] if len(graph) > 0 else None,
+            "coe1": graph[1] if len(graph) > 1 else None,
+            "frequency_min": _to_float(raw.get("fdfMin")),
+            "frequency_max": _to_float(raw.get("fdfMax")),
+            "rh_out_set": _to_float(raw.get("rh")) or 1.0,
         }
         if raw.get("dt") is not None:
             params["delta_t"] = _to_float(raw.get("dt"))
@@ -705,6 +731,8 @@ def _normalize_equipment_entry(eq_type: str, raw: dict[str, Any]) -> dict[str, A
             "cond_flow": _to_float(raw.get("condFlow")),
             "evap_dp": _to_float(raw.get("evapDp")),
             "cond_dp": _to_float(raw.get("condDp")),
+            "machine_type": _normalize_machine_type(raw.get("type")),
+            "standby_power": _to_float(raw.get("standbyPower")) or 0.0,
         }
         name = f"{brand or ''}{model_no}".strip() or model_no
     elif eq_type == "air_cooled_module":
@@ -719,6 +747,8 @@ def _normalize_equipment_entry(eq_type: str, raw: dict[str, Any]) -> dict[str, A
             "heating_flow": _to_float(raw.get("heatingFlow")),
             "cooling_dp": _to_float(raw.get("coolingDp")),
             "heating_dp": _to_float(raw.get("heatingDp")),
+            "frequency_mode": str(raw.get("frequencyMode") or "variable").lower(),
+            "standby_power": _to_float(raw.get("standbyPower")) or 0.0,
         }
         name = f"{brand or ''}{model_no}".strip() or model_no
     else:

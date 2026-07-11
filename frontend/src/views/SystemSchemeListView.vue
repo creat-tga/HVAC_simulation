@@ -11,7 +11,7 @@
  *   - 删除：二次确认
  */
 
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -24,9 +24,10 @@ import {
 } from '@element-plus/icons-vue'
 import { useSystemSchemeStore } from '@/stores/system-scheme'
 import { useProjectStore } from '@/stores/project'
+import { useTaskTrackerStore } from '@/stores/taskTracker'
 import { useResponsive } from '@/composables/useResponsive'
-import { getSimulations } from '@/api/simulation'
-import { getScheme, updateScheme } from '@/api/system-scheme'
+import { getSimulations, getSimulationStatus } from '@/api/simulation'
+import { getScheme, runSchemeEnergySimulation, updateScheme } from '@/api/system-scheme'
 import AddWorkspaceItemIcon from '@/components/icons/AddWorkspaceItemIcon.vue'
 import StartSimulationIcon from '@/components/icons/StartSimulationIcon.vue'
 import type { Subsystem, SystemSchemeCreate } from '@/types/system-scheme'
@@ -36,6 +37,7 @@ const router = useRouter()
 const { t } = useI18n()
 const store = useSystemSchemeStore()
 const projectStore = useProjectStore()
+const taskTracker = useTaskTrackerStore()
 const { isMobile } = useResponsive()
 
 const projectId = computed(() => route.params.projectId as string)
@@ -243,17 +245,65 @@ function openScheme(id: string) {
   router.push(`/projects/${projectId.value}/system-schemes/${id}`)
 }
 
-// ------- 能耗仿真（占位）-------
+// ------- multiSystem 能耗仿真 -------
 const runningIds = ref<Set<string>>(new Set())
-function runEnergySim(id: string) {
-  ElMessage.info(t('scheme.energySimTba'))
-  // Placeholder for future energy simulation API call:
-  // await runEnergySimulation(id); refresh list.
-  void id
+const monitorTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function setRunning(id: string, running: boolean) {
+  const next = new Set(runningIds.value)
+  if (running) next.add(id)
+  else next.delete(id)
+  runningIds.value = next
 }
-function runAllEnergySim() {
-  if (!store.items.length) return
-  ElMessage.info(t('scheme.energySimTba'))
+
+async function monitorEnergyRun(schemeId: string, buildingId: string, resultId: string) {
+  try {
+    const { data } = await getSimulationStatus(buildingId, resultId)
+    if (['completed', 'failed', 'cancelled'].includes(data.status)) {
+      setRunning(schemeId, false)
+      monitorTimers.delete(schemeId)
+      await store.fetchList(projectId.value)
+      if (data.status === 'completed') ElMessage.success(t('scheme.energyCompleted'))
+      else if (data.status === 'failed') ElMessage.error(data.error_message || t('scheme.energyFailed'))
+      return
+    }
+  } catch {
+    // A transient platform/engine failure is retried by the next poll.
+  }
+  monitorTimers.set(schemeId, setTimeout(() => void monitorEnergyRun(schemeId, buildingId, resultId), 3000))
+}
+
+async function runEnergySim(id: string) {
+  const row = store.items.find((item) => item.id === id)
+  if (!row || runningIds.value.has(id)) return
+  if (row.has_error) {
+    ElMessage.warning(t('scheme.energyValidationRequired'))
+    return
+  }
+  setRunning(id, true)
+  try {
+    const { data } = await runSchemeEnergySimulation(id)
+    taskTracker.addTask({
+      resultId: data.id,
+      buildingId: row.building_id,
+      buildingName: row.building_name || row.name,
+      simulationType: 'energy',
+    })
+    ElMessage.success(t('scheme.energyStarted'))
+    void monitorEnergyRun(id, row.building_id, data.id)
+  } catch (e: any) {
+    setRunning(id, false)
+    ElMessage.error(e?.response?.data?.detail || t('scheme.energyFailed'))
+  }
+}
+
+async function runAllEnergySim() {
+  const runnable = store.items.filter((item) => !item.has_error && !runningIds.value.has(item.id))
+  if (!runnable.length) {
+    ElMessage.warning(t('scheme.energyValidationRequired'))
+    return
+  }
+  await Promise.allSettled(runnable.map((item) => runEnergySim(item.id)))
 }
 
 // ------- 工具 -------
@@ -303,6 +353,11 @@ watch(projectId, async () => {
 
 onMounted(async () => {
   await Promise.all([store.fetchList(projectId.value), loadBuildings()])
+})
+
+onUnmounted(() => {
+  for (const timer of monitorTimers.values()) clearTimeout(timer)
+  monitorTimers.clear()
 })
 </script>
 
@@ -488,7 +543,7 @@ onMounted(async () => {
         <el-form-item :label="t('scheme.strategy.safetyMargin')" required>
           <el-input-number
             v-model="editForm.safety_margin"
-            :min="0"
+            :min="0.5"
             :max="1.2"
             :step="0.01"
             :precision="2"

@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.routers.auth import get_current_user
 from app.models.building import Building
 from app.schemas.simulation import (
     HVACSystemCreate,
@@ -17,7 +18,7 @@ from app.schemas.simulation import (
 )
 from app.services import simulation_service
 
-router = APIRouter(prefix="/buildings/{building_id}", tags=["仿真管理"])
+router = APIRouter(prefix="/buildings/{building_id}", tags=["仿真管理"], dependencies=[Depends(get_current_user)])
 
 
 # --- Weather Data ---
@@ -68,21 +69,17 @@ async def run_load_simulation(
 
 
 # --- Energy Simulation (uses existing load results) ---
-@router.post("/energy-simulation", response_model=SimulationResponse, status_code=201)
+@router.post("/energy-simulation", deprecated=True)
 async def run_energy_simulation(
     building_id: uuid.UUID,
     data: SimulationCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    """提交能耗仿真任务（基于已完成的负荷仿真结果）"""
-    if not data.load_result_id:
-        raise HTTPException(status_code=400, detail="必须指定负荷仿真结果ID (load_result_id)")
-    try:
-        return await simulation_service.create_energy_simulation(
-            db, building_id, data.load_result_id
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    """Legacy simplified-COP endpoint; real runs require a frozen system scheme."""
+    raise HTTPException(
+        status_code=410,
+        detail="简化能耗模型已停用，请从项目系统方案页面提交真实 multiSystem 仿真",
+    )
 
 
 # --- HVAC Systems ---

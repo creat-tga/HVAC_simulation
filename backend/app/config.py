@@ -1,7 +1,8 @@
+import secrets
 from pathlib import Path
 from typing import Any
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -23,7 +24,16 @@ class Settings(BaseSettings):
     energyplus_path: str = ""
 
     # Auth
-    secret_key: str = "hvac-simulation-secret-key-change-in-production"
+    secret_key: str = ""
+    bootstrap_admin_username: str = ""
+    bootstrap_admin_password: str = ""
+
+    # External calculation engine. Run multiSystem on a different port from
+    # this platform API (the platform defaults to 8000).
+    multisystem_base_url: str = "http://127.0.0.1:8010"
+    multisystem_timeout_seconds: float = 60.0
+    multisystem_poll_interval_seconds: float = 2.0
+    multisystem_api_key: str = ""
 
     # Redis / Celery
     redis_url: str = "redis://localhost:6379/0"
@@ -75,6 +85,26 @@ class Settings(BaseSettings):
 
         resolved = (BACKEND_DIR / db_path).resolve()
         return f"{prefix}{resolved.as_posix()}"
+
+    @model_validator(mode="after")
+    def _validate_security_settings(self) -> "Settings":
+        key = self.secret_key.strip()
+        known_defaults = {
+            "hvac-simulation-secret-key-change-in-production",
+            "replace-with-at-least-32-random-characters",
+        }
+        if len(key) < 32 or key in known_defaults:
+            if not self.debug:
+                raise ValueError("SECRET_KEY must contain at least 32 characters in production")
+            self.secret_key = secrets.token_urlsafe(48)
+
+        username = self.bootstrap_admin_username.strip()
+        password = self.bootstrap_admin_password
+        if bool(username) != bool(password):
+            raise ValueError("BOOTSTRAP_ADMIN_USERNAME and BOOTSTRAP_ADMIN_PASSWORD must be configured together")
+        if password and len(password) < 12:
+            raise ValueError("BOOTSTRAP_ADMIN_PASSWORD must contain at least 12 characters")
+        return self
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

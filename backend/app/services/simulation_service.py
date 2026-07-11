@@ -127,7 +127,11 @@ async def get_simulation_results_by_type(
 async def get_simulation_result(
     db: AsyncSession, result_id: uuid.UUID
 ) -> SimulationResult | None:
-    return await db.get(SimulationResult, result_id)
+    result = await db.get(SimulationResult, result_id)
+    if result and result.simulation_type == "scheme_energy" and result.status not in ("completed", "failed", "cancelled"):
+        from app.services.scheme_simulation_service import synchronize_scheme_energy_result
+        return await synchronize_scheme_energy_result(db, result_id)
+    return result
 
 
 async def create_load_simulation(
@@ -458,8 +462,12 @@ async def _run_energy_background(
 async def get_simulation_status(
     db: AsyncSession, result_id: uuid.UUID
 ) -> SimulationResult | None:
-    """Get current simulation status (lightweight, for polling)."""
-    return await db.get(SimulationResult, result_id)
+    """Get current simulation status and synchronize external engine runs."""
+    result = await db.get(SimulationResult, result_id)
+    if result and result.simulation_type == "scheme_energy" and result.status not in ("completed", "failed", "cancelled"):
+        from app.services.scheme_simulation_service import synchronize_scheme_energy_result
+        return await synchronize_scheme_energy_result(db, result_id)
+    return result
 
 
 async def cancel_simulation(
@@ -474,6 +482,10 @@ async def cancel_simulation(
         return result  # Already terminal
 
     rid = str(result_id)
+
+    if result.simulation_type == "scheme_energy":
+        from app.services.scheme_simulation_service import cancel_scheme_energy_simulation
+        return await cancel_scheme_energy_simulation(db, result)
 
     # Try cancel Celery task first (if dispatched via Celery)
     if result.task_id and is_redis_available():

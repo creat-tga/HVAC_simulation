@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -10,6 +11,7 @@ from app.config import settings
 from app.models.user import User
 
 
+log = logging.getLogger(__name__)
 SECRET_KEY = settings.secret_key
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
@@ -53,19 +55,25 @@ async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
 
 
 async def seed_admin(db: AsyncSession) -> None:
-    """Create default admin user if not exists."""
-    existing = await get_user_by_username(db, "admin")
+    """Create an explicitly configured bootstrap administrator once."""
+    username = settings.bootstrap_admin_username.strip()
+    password = settings.bootstrap_admin_password
+    if not username or not password:
+        return
+
+    existing = await get_user_by_username(db, username)
     if existing:
-        # Make sure existing admin has admin role
-        if existing.role != "admin":
-            existing.role = "admin"
-            existing.status = "active"
-            await db.commit()
+        existing.password_hash = hash_password(password)
+        existing.role = "admin"
+        existing.status = "active"
+        existing.is_active = True
+        await db.commit()
+        log.warning("Bootstrap administrator %s credentials were rotated; remove bootstrap settings now", username)
         return
     admin = User(
         id=uuid.uuid4(),
-        username="admin",
-        password_hash=hash_password("123456"),
+        username=username,
+        password_hash=hash_password(password),
         role="admin",
         status="active",
         is_active=True,

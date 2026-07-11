@@ -224,3 +224,26 @@ pnpm run test:unit
 ---
 
 文件位置： [README.md](README.md)
+
+## multiSystem 真实能耗仿真接入
+
+系统方案页面的能耗仿真由平台后端统一编排，并调用独立的 `multiSystem` 计算服务。浏览器不直接访问计算服务。
+
+1. 在 `multiSystem/.env` 中设置 `SERVER_PORT=8010`，启动计算服务。
+2. 在本项目 `backend/.env` 中设置 `MULTISYSTEM_BASE_URL=http://127.0.0.1:8010`。
+3. 执行数据库迁移：
+
+```powershell
+cd backend
+uv run alembic upgrade head
+```
+
+4. 重新同步设备库，使水泵曲线、冷却塔性能系数和主机类型进入数据库：
+
+```powershell
+uv run python ..\scripts\seed_equipment.py
+```
+
+生产环境必须配置至少 32 位随机 `SECRET_KEY`。首次创建管理员时可临时配置 `BOOTSTRAP_ADMIN_USERNAME` 与 `BOOTSTRAP_ADMIN_PASSWORD`；管理员创建或密码轮换成功后应立即移除这两个变量。
+
+当前负荷结果只保存建筑总逐时负荷，因此真实能耗计算暂支持一个负荷分组；多负荷分组会返回明确校验错误，避免静默按面积估算。

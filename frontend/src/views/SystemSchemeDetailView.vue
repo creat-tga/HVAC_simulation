@@ -350,8 +350,6 @@ function defaultDesignParams(typ: SubsystemType): Record<string, unknown> {
       cooling_supply_temp: 7, cooling_delta_temp: 5,
       heating_supply_temp: 45, heating_delta_temp: 5,
       pipe_system: 'two_pipe', pump_head: 35, header_pressure_drop: 21,
-      chw_pump_head: 35, chw_header_pressure_drop: 21,
-      hw_pump_head: 35, hw_header_pressure_drop: 21,
     }
   }
   return {}
